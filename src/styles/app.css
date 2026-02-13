@@ -442,9 +442,17 @@ label.inline-check {
 }
 
 .class-name-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
+}
+
+.class-name-btn .color-dot {
+  margin-right: 0;
+  flex: 0 0 auto;
 }
 
 .class-hotkey-controls {
@@ -456,8 +464,8 @@ label.inline-check {
 
 .class-hotkey-btn,
 .class-hotkey-clear {
-  height: 30px;
-  min-height: 30px;
+  height: 28px;
+  min-height: 28px;
   padding: 0 8px;
   font-size: 12px;
   line-height: 1;
@@ -537,8 +545,10 @@ label.inline-check {
 
 .class-name-mid {
   display: block;
-  width: 100%;
-  max-width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;

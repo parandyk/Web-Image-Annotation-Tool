@@ -17,14 +17,14 @@ export function MiddleTruncate(props: { text: string; className?: string; title?
 
   useEffect(() => {
     if (!ref.current) return;
-    const el = ref.current.parentElement ?? ref.current;
+    const el = ref.current;
     const computed = window.getComputedStyle(el);
     setFont(
       `${computed.fontStyle} ${computed.fontVariant} ${computed.fontWeight} ${computed.fontSize} / ${computed.lineHeight} ${computed.fontFamily}`
     );
     const observer = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 0;
-      setWidth(Math.max(0, w - 4));
+      setWidth(Math.max(0, w - 2));
     });
     observer.observe(el);
     return () => observer.disconnect();
