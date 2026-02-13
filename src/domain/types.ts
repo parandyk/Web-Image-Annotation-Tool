@@ -11,6 +11,7 @@ export type ClassData = {
   color: string;
   isVisible: boolean;
   isDefault?: boolean;
+  hotkey?: string;
 };
 
 export type Annotation = {

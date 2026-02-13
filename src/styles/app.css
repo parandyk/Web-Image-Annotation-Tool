@@ -447,6 +447,27 @@ label.inline-check {
   min-width: 0;
 }
 
+.class-hotkey-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.class-hotkey-btn,
+.class-hotkey-clear {
+  height: 30px;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.class-hotkey-btn {
+  min-width: 78px;
+  white-space: nowrap;
+}
+
 .annotation-title-btn {
   min-width: 0;
   text-align: left;

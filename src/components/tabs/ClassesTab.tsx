@@ -60,6 +60,7 @@ export function ClassesTab(): JSX.Element {
   const [nameInput, setNameInput] = useState('');
   const [classSearch, setClassSearch] = useState('');
   const [renameMap, setRenameMap] = useState<Record<string, string>>({});
+  const [captureHotkeyClassId, setCaptureHotkeyClassId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [classMenu, setClassMenu] = useState<{ classId: string; x: number; y: number } | null>(null);
@@ -73,6 +74,8 @@ export function ClassesTab(): JSX.Element {
 
   const addClass = useAppStore((s) => s.addClass);
   const renameClass = useAppStore((s) => s.renameClass);
+  const setClassHotkey = useAppStore((s) => s.setClassHotkey);
+  const clearClassHotkey = useAppStore((s) => s.clearClassHotkey);
   const toggleClassVisibility = useAppStore((s) => s.toggleClassVisibility);
   const deleteClassToUnassigned = useAppStore((s) => s.deleteClassToUnassigned);
   const deleteClassSwapTo = useAppStore((s) => s.deleteClassSwapTo);
@@ -180,6 +183,35 @@ export function ClassesTab(): JSX.Element {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [classMenu]);
+
+  useEffect(() => {
+    if (!captureHotkeyClassId) return;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        setCaptureHotkeyClassId(null);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        setStatusText('Use a single letter (A-Z) or digit (0-9).');
+        return;
+      }
+      if (e.key.length !== 1) {
+        setStatusText('Use a single letter (A-Z) or digit (0-9).');
+        return;
+      }
+      const hotkey = e.key.toUpperCase();
+      if (!/^[A-Z0-9]$/.test(hotkey)) {
+        setStatusText('Use a single letter (A-Z) or digit (0-9).');
+        return;
+      }
+      setClassHotkey(captureHotkeyClassId, hotkey);
+      setCaptureHotkeyClassId(null);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [captureHotkeyClassId, setClassHotkey, setStatusText]);
 
   const isSelectionModifier = (evt: { ctrlKey?: boolean; metaKey?: boolean }): boolean =>
     Boolean(evt.ctrlKey || evt.metaKey);
@@ -359,6 +391,26 @@ export function ClassesTab(): JSX.Element {
                       <span className="color-dot" style={{ background: cls.color }} />
                       <MiddleTruncate text={cls.name} className="class-name-mid" />
                     </button>
+                    <div className="class-hotkey-controls">
+                      <button
+                        className={`class-hotkey-btn ${captureHotkeyClassId === cls.id ? 'active' : ''}`}
+                        onClick={() =>
+                          setCaptureHotkeyClassId((current) => (current === cls.id ? null : cls.id))
+                        }
+                        title={captureHotkeyClassId === cls.id ? 'Press A-Z or 0-9. Esc cancels.' : 'Assign class hotkey'}
+                      >
+                        {captureHotkeyClassId === cls.id ? 'Press key...' : cls.hotkey ? `Key: ${cls.hotkey}` : 'Set key'}
+                      </button>
+                      {cls.hotkey && (
+                        <button
+                          className="class-hotkey-clear"
+                          onClick={() => clearClassHotkey(cls.id)}
+                          title="Clear class hotkey"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="row actions-row class-actions-combined">

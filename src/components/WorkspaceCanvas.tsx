@@ -149,6 +149,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteAnnotationWarning = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
 
+  const selectClass = useAppStore((s) => s.selectClass);
   const selectAnnotation = useAppStore((s) => s.selectAnnotation);
   const toggleAnnotationSelection = useAppStore((s) => s.toggleAnnotationSelection);
   const clearAnnotationSelection = useAppStore((s) => s.clearAnnotationSelection);
@@ -199,6 +200,18 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
 
   const isMultiSelectModifierActive = (evt: { ctrlKey?: boolean; metaKey?: boolean; getModifierState?: (keyArg: string) => boolean }): boolean =>
     Boolean(evt.ctrlKey || evt.metaKey || evt.getModifierState?.('Control'));
+
+  const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
+
+  const classHotkeyMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const cls of classes) {
+      const key = cls.hotkey?.toUpperCase();
+      if (!key || !/^[A-Z0-9]$/.test(key)) continue;
+      map.set(key, cls.id);
+    }
+    return map;
+  }, [classes]);
 
   // Load the browser image element once per selected source.
   useEffect(() => {
@@ -312,7 +325,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     // Escape aborts all transient interactions; Ctrl/Cmd+A selects all annotations in image.
     const onKey = (e: KeyboardEvent): void => {
       const active = document.activeElement as HTMLElement | null;
-      if (active && active.closest('input,textarea,select,[contenteditable="true"]')) return;
+      if (active && active.closest('input,textarea,select,[contenteditable="true"],.class-hotkey-btn.active')) return;
 
       if (e.key === 'Escape') {
         setMenu(null);
@@ -330,11 +343,22 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       if (ctrlOrCmd && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         selectAllAnnotationsCurrentImage();
+        return;
       }
+
+      if (interactionMode !== 'add') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1) return;
+      const hotkey = e.key.toUpperCase();
+      if (!/^[A-Z0-9]$/.test(hotkey)) return;
+      const classId = classHotkeyMap.get(hotkey);
+      if (!classId) return;
+      e.preventDefault();
+      selectClass(classId);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clearAnnotationSelection, selectAllAnnotationsCurrentImage]);
+  }, [classHotkeyMap, clearAnnotationSelection, interactionMode, selectAllAnnotationsCurrentImage, selectClass]);
 
   useEffect(() => {
     setLiveDraftBBox(draftBBox);
@@ -350,8 +374,6 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     stage.setPointersPositions(e as unknown as PointerEvent);
     return getPointOnImage(stage);
   };
-
-  const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
 
   const visibleAnnotations = useMemo(
     () =>

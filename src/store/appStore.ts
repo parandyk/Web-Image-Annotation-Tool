@@ -103,6 +103,8 @@ type AppState = ViewState & {
 
   addClass: (name: string) => void;
   renameClass: (classId: string, newName: string) => void;
+  setClassHotkey: (classId: string, hotkey: string) => void;
+  clearClassHotkey: (classId: string) => void;
   toggleClassVisibility: (classId: string) => void;
   deleteClassSwapTo: (classId: string, substituteClassId: string) => void;
   deleteClassAndAffected: (classId: string) => void;
@@ -190,6 +192,12 @@ function sanitizeClassName(input: string): string {
     .trim()
     .replace(/\s+/g, '_')
     .replace(/[^A-Za-z0-9_]/g, '');
+}
+
+function normalizeClassHotkey(input: string): string | null {
+  const key = input.trim().toUpperCase();
+  if (!/^[A-Z0-9]$/.test(key)) return null;
+  return key;
 }
 
 function splitNameAndExt(fileName: string): { stem: string; ext: string } {
@@ -450,6 +458,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       color: '#27272A',
       isVisible: true,
       isDefault: true,
+      hotkey: undefined,
     };
 
     set((state) => ({
@@ -613,6 +622,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         color: '#27272A',
         isVisible: true,
         isDefault: true,
+        hotkey: undefined,
       };
       workingClasses.unshift(fallback);
       classIdByLowerName.set(fallback.name.toLowerCase(), fallback.id);
@@ -632,6 +642,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         name: sanitized,
         color: getClassColor(workingClasses.length),
         isVisible: true,
+        hotkey: undefined,
       };
       workingClasses.push(newClass);
       classIdByLowerName.set(trimmed.toLowerCase(), newClass.id);
@@ -1006,6 +1017,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       name: sanitized,
       color: getClassColor(state.classes.length),
       isVisible: true,
+      hotkey: undefined,
     };
 
     set((s) => ({
@@ -1043,6 +1055,64 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set((s) => ({
       classes: s.classes.map((c) => (c.id === classId ? { ...c, name: sanitized } : c)),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  setClassHotkey: (classId, hotkey) => {
+    const state = get();
+    const cls = state.classes.find((c) => c.id === classId);
+    if (!cls) return;
+
+    const normalized = normalizeClassHotkey(hotkey);
+    if (!normalized) {
+      set({ statusText: 'Hotkey must be a single letter (A-Z) or digit (0-9).' });
+      return;
+    }
+
+    const conflicting = state.classes.find((c) => c.id !== classId && c.hotkey === normalized);
+    if (conflicting) {
+      set({ statusText: `Hotkey "${normalized}" is already assigned to "${conflicting.name}".` });
+      return;
+    }
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      classes: s.classes.map((c) => (c.id === classId ? { ...c, hotkey: normalized } : c)),
+      statusText: `Assigned "${normalized}" to class "${cls.name}".`,
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  clearClassHotkey: (classId) => {
+    const state = get();
+    const cls = state.classes.find((c) => c.id === classId);
+    if (!cls || !cls.hotkey) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      classes: s.classes.map((c) => (c.id === classId ? { ...c, hotkey: undefined } : c)),
+      statusText: `Cleared hotkey for class "${cls.name}".`,
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -2168,6 +2238,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         color: c.color,
         isVisible: c.isVisible,
         isDefault: Boolean(c.isDefault),
+        hotkey: c.hotkey ?? null,
       })),
       images: state.images.map((img) => ({
         id: img.id,
