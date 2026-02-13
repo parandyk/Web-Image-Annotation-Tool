@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { useSelectedImage, useSortedFilteredAnnotations, useSortedFilteredImages } from '../../store/selectors';
 import { MiddleTruncate } from '../common/MiddleTruncate';
+import { PortalMenu } from '../common/PortalMenu';
 
 function NavIcon({ kind }: { kind: 'first' | 'prev' | 'next' | 'last' }): JSX.Element {
   if (kind === 'first') {
@@ -81,10 +82,13 @@ function ActionIcon({ kind }: { kind: 'hide' | 'show' | 'delete' | 'anchor' | 'u
 }
 
 export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotations' }): JSX.Element {
-  const [confirmDeleteAnnId, setConfirmDeleteAnnId] = useState<string | null>(null);
-  const [confirmDeleteImageId, setConfirmDeleteImageId] = useState<string | null>(null);
+  const [confirmDeleteAnnIds, setConfirmDeleteAnnIds] = useState<string[] | null>(null);
+  const [confirmDeleteImageIds, setConfirmDeleteImageIds] = useState<string[] | null>(null);
+  const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
+  const [listMenu, setListMenu] = useState<{ type: 'image' | 'annotation'; id: string; x: number; y: number } | null>(null);
   const [imageSearch, setImageSearch] = useState('');
   const [annotationSearch, setAnnotationSearch] = useState('');
+  const listMenuRef = useRef<HTMLDivElement | null>(null);
   const imageSort = useAppStore((s) => s.imageSort);
   const imageFilter = useAppStore((s) => s.imageFilter);
   const annotationSort = useAppStore((s) => s.annotationSort);
@@ -97,12 +101,18 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
 
   const selectImage = useAppStore((s) => s.selectImage);
   const deleteImage = useAppStore((s) => s.deleteImage);
+  const deleteImages = useAppStore((s) => s.deleteImages);
   const selectAnnotation = useAppStore((s) => s.selectAnnotation);
-  const selectedAnnotationId = useAppStore((s) => s.selectedAnnotationId);
+  const setAnnotationSelection = useAppStore((s) => s.setAnnotationSelection);
+  const selectedAnnotationIds = useAppStore((s) => s.selectedAnnotationIds);
+  const toggleAnnotationSelection = useAppStore((s) => s.toggleAnnotationSelection);
+  const deleteSelectedAnnotations = useAppStore((s) => s.deleteSelectedAnnotations);
   const deleteAnnotation = useAppStore((s) => s.deleteAnnotation);
   const setAnnotationClass = useAppStore((s) => s.setAnnotationClass);
   const toggleAnnotationVisibility = useAppStore((s) => s.toggleAnnotationVisibility);
   const toggleAnnotationAnchoring = useAppStore((s) => s.toggleAnnotationAnchoring);
+  const toggleAnnotationsVisibility = useAppStore((s) => s.toggleAnnotationsVisibility);
+  const toggleAnnotationsAnchoring = useAppStore((s) => s.toggleAnnotationsAnchoring);
   const moveToNextImage = useAppStore((s) => s.moveToNextImage);
   const moveToPrevImage = useAppStore((s) => s.moveToPrevImage);
   const moveToFirstImage = useAppStore((s) => s.moveToFirstImage);
@@ -125,6 +135,82 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     return label.includes(annotationSearch.toLowerCase());
   });
 
+  const isSelectionModifier = (evt: { ctrlKey?: boolean; metaKey?: boolean }): boolean =>
+    Boolean(evt.ctrlKey || evt.metaKey);
+
+  useEffect(() => {
+    const valid = new Set(images.map((img) => img.id));
+    setSelectedImageIds((prev) => {
+      const next = prev.filter((id) => valid.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [images]);
+
+  useEffect(() => {
+    if (!listMenu) return;
+    const closeDistancePx = 240;
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target as Node;
+      if (listMenuRef.current?.contains(target)) return;
+      setListMenu(null);
+    };
+    const onPointerMove = (e: PointerEvent): void => {
+      const menuEl = listMenuRef.current;
+      if (!menuEl) return;
+      const rect = menuEl.getBoundingClientRect();
+      const px = e.clientX;
+      const py = e.clientY;
+      const inMenu =
+        px >= rect.left - 12 &&
+        px <= rect.right + 12 &&
+        py >= rect.top - 12 &&
+        py <= rect.bottom + 12;
+      if (inMenu) return;
+      const nearestX = Math.max(rect.left, Math.min(px, rect.right));
+      const nearestY = Math.max(rect.top, Math.min(py, rect.bottom));
+      const distance = Math.hypot(px - nearestX, py - nearestY);
+      // Auto-close long-range pointer drift, consistent with topbar/flyout behavior.
+      if (distance > closeDistancePx) {
+        setListMenu(null);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setListMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove, true);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [listMenu]);
+
+  const deleteAnnotationIdsWithWarning = (ids: string[]): void => {
+    if (ids.length === 0) return;
+    if (suppressDeleteAnnotationWarning) {
+      if (ids.length === 1) {
+        deleteAnnotation(ids[0]);
+      } else {
+        setAnnotationSelection(ids, ids[ids.length - 1] ?? null);
+        deleteSelectedAnnotations();
+      }
+      return;
+    }
+    setConfirmDeleteAnnIds(ids);
+  };
+
+  const deleteImageIdsWithWarning = (ids: string[]): void => {
+    if (ids.length === 0) return;
+    if (suppressDeleteImageWarning) {
+      if (ids.length === 1) deleteImage(ids[0]);
+      else deleteImages(ids);
+      return;
+    }
+    setConfirmDeleteImageIds(ids);
+  };
+
   const moveToFirstAnnotation = (): void => {
     if (annotations.length === 0) return;
     selectAnnotation(annotations[0].id);
@@ -136,8 +222,9 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   };
 
   const imagesPanel = (
+    // Image panel: navigation + filtered list + multi-select + bulk delete context menu.
     <section className="split-panel">
-      <h4>Image Navigation</h4>
+      <h4>Image navigation</h4>
       <div className="row">
         <button className="icon-nav-btn" title="First image" onClick={moveToFirstImage}><NavIcon kind="first" /></button>
         <button className="icon-nav-btn" title="Previous image" onClick={moveToPrevImage}><NavIcon kind="prev" /></button>
@@ -182,8 +269,33 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
           </div>
         )}
         {displayedImages.map((img) => (
-          <div key={img.id} className={`list-row image-list-row ${selectedImage?.id === img.id ? 'selected' : ''}`}>
-            <button className="grow image-name-btn" onClick={() => selectImage(img.id)}>
+          <div
+            key={img.id}
+            className={`list-row image-list-row ${selectedImageIds.includes(img.id) || selectedImage?.id === img.id ? 'selected' : ''}`}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (!selectedImageIds.includes(img.id)) {
+                setSelectedImageIds([img.id]);
+                selectImage(img.id);
+              }
+              setListMenu({ type: 'image', id: img.id, x: e.clientX, y: e.clientY });
+            }}
+          >
+            <button
+              className="grow image-name-btn"
+              onClick={(e) => {
+                if (isSelectionModifier(e)) {
+                  setSelectedImageIds((prev) => {
+                    if (prev.includes(img.id)) return prev.filter((id) => id !== img.id);
+                    return [...prev, img.id];
+                  });
+                  selectImage(img.id);
+                } else {
+                  setSelectedImageIds([img.id]);
+                  selectImage(img.id);
+                }
+              }}
+            >
               <MiddleTruncate text={img.name} className="image-name-mid" />
             </button>
             <button
@@ -191,11 +303,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
               title="Delete image"
               aria-label="Delete image"
               onClick={() => {
-                if (suppressDeleteImageWarning) {
-                  deleteImage(img.id);
-                } else {
-                  setConfirmDeleteImageId(img.id);
-                }
+                deleteImageIdsWithWarning([img.id]);
               }}
             >
               <ActionIcon kind="delete" />
@@ -207,8 +315,9 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   );
 
   const annotationsPanel = (
+    // Annotation panel: navigation + per-item controls + class reassignment.
     <section className="split-panel">
-      <h4>Annotation Navigation</h4>
+      <h4>Annotation navigation</h4>
       <div className="row">
         <button className="icon-nav-btn" title="First annotation" onClick={moveToFirstAnnotation}><NavIcon kind="first" /></button>
         <button className="icon-nav-btn" title="Previous annotation" onClick={moveToPrevAnnotation}><NavIcon kind="prev" /></button>
@@ -255,9 +364,44 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
         {displayedAnnotations.map((ann) => {
           const cls = classes.find((c) => c.id === ann.classId);
           return (
-            <div key={ann.id} className={`list-row annotation-item ${selectedAnnotationId === ann.id ? 'selected' : ''}`}>
+            <div
+              key={ann.id}
+              className={`list-row annotation-item ${selectedAnnotationIds.includes(ann.id) ? 'selected' : ''}`}
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('button,input,select,textarea,label,a,[role="button"]')) return;
+                if (isSelectionModifier(e)) {
+                  toggleAnnotationSelection(ann.id);
+                } else {
+                  selectAnnotation(ann.id);
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const target = e.target as HTMLElement;
+                if (target.closest('.annotation-class-picker,.annotation-class-select,select,input,label')) {
+                  return;
+                }
+                if (target.closest('button') && !target.closest('.annotation-title-btn')) {
+                  return;
+                }
+                if (!selectedAnnotationIds.includes(ann.id)) {
+                  selectAnnotation(ann.id);
+                }
+                setListMenu({ type: 'annotation', id: ann.id, x: e.clientX, y: e.clientY });
+              }}
+            >
               <div className="row between">
-                <button className="grow annotation-title-btn" onClick={() => selectAnnotation(ann.id)}>
+                <button
+                  className="grow annotation-title-btn"
+                  onClick={(e) => {
+                    if (isSelectionModifier(e)) {
+                      toggleAnnotationSelection(ann.id);
+                    } else {
+                      selectAnnotation(ann.id);
+                    }
+                  }}
+                >
                   <MiddleTruncate text={`#${ann.displayId} ${cls?.name ?? 'Unknown'}`} className="truncate-mid" />
                 </button>
               </div>
@@ -284,11 +428,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
                   title="Delete annotation"
                   aria-label="Delete annotation"
                   onClick={() => {
-                    if (suppressDeleteAnnotationWarning) {
-                      deleteAnnotation(ann.id);
-                    } else {
-                      setConfirmDeleteAnnId(ann.id);
-                    }
+                    deleteAnnotationIdsWithWarning([ann.id]);
                   }}
                 >
                   <ActionIcon kind="delete" />
@@ -324,13 +464,74 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
       {view === 'images' && <div className="panel-stack">{imagesPanel}</div>}
       {view === 'annotations' && <div className="panel-stack">{annotationsPanel}</div>}
 
-      {confirmDeleteAnnId && (
-        <div className="modal-backdrop" onClick={() => setConfirmDeleteAnnId(null)}>
+      {listMenu && (
+        <PortalMenu x={listMenu.x} y={listMenu.y} menuRef={listMenuRef}>
+          {listMenu.type === 'image' ? (
+            <button
+              onClick={() => {
+                const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                deleteImageIdsWithWarning(ids);
+                setListMenu(null);
+              }}
+            >
+              Delete selected
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  const ids =
+                    selectedAnnotationIds.includes(listMenu.id) && selectedAnnotationIds.length > 1
+                      ? selectedAnnotationIds
+                      : [listMenu.id];
+                  if (ids.length > 1) toggleAnnotationsVisibility(ids);
+                  else toggleAnnotationVisibility(listMenu.id);
+                  setListMenu(null);
+                }}
+              >
+                Toggle visibility
+              </button>
+              <button
+                onClick={() => {
+                  const ids =
+                    selectedAnnotationIds.includes(listMenu.id) && selectedAnnotationIds.length > 1
+                      ? selectedAnnotationIds
+                      : [listMenu.id];
+                  if (ids.length > 1) toggleAnnotationsAnchoring(ids);
+                  else toggleAnnotationAnchoring(listMenu.id);
+                  setListMenu(null);
+                }}
+              >
+                Toggle anchoring
+              </button>
+              <button
+                onClick={() => {
+                  const ids =
+                    selectedAnnotationIds.includes(listMenu.id) && selectedAnnotationIds.length > 1
+                      ? selectedAnnotationIds
+                      : [listMenu.id];
+                  deleteAnnotationIdsWithWarning(ids);
+                  setListMenu(null);
+                }}
+              >
+                Delete selected
+              </button>
+            </>
+          )}
+        </PortalMenu>
+      )}
+
+      {confirmDeleteAnnIds && (
+        <div className="modal-backdrop" onClick={() => setConfirmDeleteAnnIds(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="panel-stack">
               <section>
                 <h4>Delete annotation</h4>
-                <p>This will permanently remove the selected annotation.</p>
+                <p>
+                  {confirmDeleteAnnIds.length > 1
+                    ? `This will permanently remove ${confirmDeleteAnnIds.length} selected annotations.`
+                    : 'This will permanently remove the selected annotation.'}
+                </p>
                 <label className="inline-check">
                   <input
                     type="checkbox"
@@ -342,26 +543,35 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
                 <div className="row dialog-actions">
                   <button
                     onClick={() => {
-                      deleteAnnotation(confirmDeleteAnnId);
-                      setConfirmDeleteAnnId(null);
+                      if (confirmDeleteAnnIds.length === 1) {
+                        deleteAnnotation(confirmDeleteAnnIds[0]);
+                      } else {
+                        setAnnotationSelection(confirmDeleteAnnIds, confirmDeleteAnnIds[confirmDeleteAnnIds.length - 1] ?? null);
+                        deleteSelectedAnnotations();
+                      }
+                      setConfirmDeleteAnnIds(null);
                     }}
                   >
                     Delete
                   </button>
-                  <button onClick={() => setConfirmDeleteAnnId(null)}>Cancel</button>
+                  <button onClick={() => setConfirmDeleteAnnIds(null)}>Cancel</button>
                 </div>
               </section>
             </div>
           </div>
         </div>
       )}
-      {confirmDeleteImageId && (
-        <div className="modal-backdrop" onClick={() => setConfirmDeleteImageId(null)}>
+      {confirmDeleteImageIds && (
+        <div className="modal-backdrop" onClick={() => setConfirmDeleteImageIds(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="panel-stack">
               <section>
                 <h4>Delete image</h4>
-                <p>This removes the image and all annotations assigned to it.</p>
+                <p>
+                  {confirmDeleteImageIds.length > 1
+                    ? `This removes ${confirmDeleteImageIds.length} images and all annotations assigned to them.`
+                    : 'This removes the image and all annotations assigned to it.'}
+                </p>
                 <label className="inline-check">
                   <input
                     type="checkbox"
@@ -373,13 +583,17 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
                 <div className="row dialog-actions">
                   <button
                     onClick={() => {
-                      deleteImage(confirmDeleteImageId);
-                      setConfirmDeleteImageId(null);
+                      if (confirmDeleteImageIds.length === 1) {
+                        deleteImage(confirmDeleteImageIds[0]);
+                      } else {
+                        deleteImages(confirmDeleteImageIds);
+                      }
+                      setConfirmDeleteImageIds(null);
                     }}
                   >
                     Delete
                   </button>
-                  <button onClick={() => setConfirmDeleteImageId(null)}>Cancel</button>
+                  <button onClick={() => setConfirmDeleteImageIds(null)}>Cancel</button>
                 </div>
               </section>
             </div>

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
-import { pickImageFiles, pickSingleTextLikeFile } from '../utils/files';
+import { pickDirectoryFiles, pickImageFiles, pickSingleTextLikeFile } from '../utils/files';
 import { SettingsTab } from './tabs/SettingsTab';
 
 type MenuId = 'file' | 'export' | 'edit';
+const IMAGE_FILE_RE = /\.(jpg|jpeg|png|bmp|tiff|tif|webp|gif)$/i;
 
 export function TopBar(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, boolean | number | string> | null>(null);
   const [pendingExport, setPendingExport] = useState<{ format: 'yolo' | 'coco'; global: boolean } | null>(null);
+  const [confirmClearWorkspace, setConfirmClearWorkspace] = useState(false);
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const buttonRefs = useRef<Record<MenuId, HTMLButtonElement | null>>({
     file: null,
@@ -21,9 +23,13 @@ export function TopBar(): JSX.Element {
     edit: null,
   });
   const openImages = useAppStore((s) => s.openImages);
+  const importDatasetFolder = useAppStore((s) => s.importDatasetFolder);
+  const closeAllImages = useAppStore((s) => s.closeAllImages);
+  const clearWorkspace = useAppStore((s) => s.clearWorkspace);
   const openClassFileText = useAppStore((s) => s.openClassFileText);
   const exportClassesTxt = useAppStore((s) => s.exportClassesTxt);
   const exportAnnotations = useAppStore((s) => s.exportAnnotations);
+  const exportWorkspaceState = useAppStore((s) => s.exportWorkspaceState);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
   const removeAllBBoxes = useAppStore((s) => s.removeAllBBoxes);
@@ -35,11 +41,11 @@ export function TopBar(): JSX.Element {
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const showLabels = useAppStore((s) => s.showLabels);
-  const showOnlySelectedThumbs = useAppStore((s) => s.showOnlySelectedThumbs);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const lineThickness = useAppStore((s) => s.lineThickness);
   const drawBoxFill = useAppStore((s) => s.drawBoxFill);
   const drawBoxBorder = useAppStore((s) => s.drawBoxBorder);
+  const showCrosshair = useAppStore((s) => s.showCrosshair);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressUnassigned = useAppStore((s) => s.suppressUnassignedExportWarningDialog);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
@@ -50,11 +56,11 @@ export function TopBar(): JSX.Element {
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const setAddingMode = useAppStore((s) => s.setAddingMode);
   const setShowLabels = useAppStore((s) => s.setShowLabels);
-  const setShowOnlySelectedThumbs = useAppStore((s) => s.setShowOnlySelectedThumbs);
   const setBBoxOpacity = useAppStore((s) => s.setBBoxOpacity);
   const setLineThickness = useAppStore((s) => s.setLineThickness);
   const setDrawBoxFill = useAppStore((s) => s.setDrawBoxFill);
   const setDrawBoxBorder = useAppStore((s) => s.setDrawBoxBorder);
+  const setShowCrosshair = useAppStore((s) => s.setShowCrosshair);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
   const setSuppressUnassigned = useAppStore((s) => s.setSuppressUnassignedExportWarningDialog);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
@@ -66,15 +72,16 @@ export function TopBar(): JSX.Element {
 
   const hasImages = images.length > 0;
 
+  // Snapshot lets modal settings support Save/Revert without immediate state loss.
   const currentSettingsSnapshot = (): Record<string, boolean | number | string> => ({
     interactionMode,
     addingMode,
     showLabels,
-    showOnlySelectedThumbs,
     bboxOpacity,
     lineThickness,
     drawBoxFill,
     drawBoxBorder,
+    showCrosshair,
     dragDeadzonePx,
     suppressUnassigned,
     exportIncludeUnassigned,
@@ -87,11 +94,11 @@ export function TopBar(): JSX.Element {
     setInteractionMode(snap.interactionMode as 'add' | 'edit');
     setAddingMode(snap.addingMode as 'click' | 'drag');
     setShowLabels(Boolean(snap.showLabels));
-    setShowOnlySelectedThumbs(Boolean(snap.showOnlySelectedThumbs));
     setBBoxOpacity(Number(snap.bboxOpacity));
     setLineThickness(Number(snap.lineThickness));
     setDrawBoxFill(Boolean(snap.drawBoxFill));
     setDrawBoxBorder(Boolean(snap.drawBoxBorder));
+    setShowCrosshair(Boolean(snap.showCrosshair));
     setDragDeadzonePx(Number(snap.dragDeadzonePx));
     setSuppressUnassigned(Boolean(snap.suppressUnassigned));
     setExportIncludeUnassigned(Boolean(snap.exportIncludeUnassigned));
@@ -111,6 +118,7 @@ export function TopBar(): JSX.Element {
   );
 
   const startExport = async (format: 'yolo' | 'coco', global: boolean): Promise<void> => {
+    // Unassigned-class warning can be bypassed globally via settings.
     if (suppressUnassigned) {
       await exportAnnotations(format, global, exportIncludeUnassigned);
       return;
@@ -129,6 +137,22 @@ export function TopBar(): JSX.Element {
     if (!file) return;
     const content = await file.text();
     openClassFileText(content);
+  };
+
+  const onOpenImageFolder = async (): Promise<void> => {
+    const files = await pickDirectoryFiles();
+    // Folder import for images only, unlike dataset import which parses labels/metadata.
+    const imageFiles = files.filter((f) => IMAGE_FILE_RE.test(f.name.toLowerCase()));
+    if (imageFiles.length === 0) {
+      setStatusText('No supported image files found in selected folder.');
+      return;
+    }
+    await openImages(imageFiles);
+  };
+
+  const onImportDataset = async (): Promise<void> => {
+    const files = await pickDirectoryFiles();
+    await importDatasetFolder(files);
   };
 
   const closeMenus = (): void => setOpenMenu(null);
@@ -173,6 +197,7 @@ export function TopBar(): JSX.Element {
       const cx = b.left + b.width / 2;
       const cy = b.top + b.height / 2;
       const dist = Math.hypot(px - cx, py - cy);
+      // Close flyouts when pointer leaves command area by a larger distance.
       if (dist > 260) {
         setOpenMenu(null);
       }
@@ -207,6 +232,7 @@ export function TopBar(): JSX.Element {
 
   useEffect(() => {
     if (!statusText) return;
+    // Status text is transient feedback; auto-clear to avoid stale warnings.
     const id = window.setTimeout(() => setStatusText(null), 2600);
     return () => window.clearTimeout(id);
   }, [setStatusText, statusText]);
@@ -222,7 +248,9 @@ export function TopBar(): JSX.Element {
             {openMenu === 'file' && (
               <div ref={(el) => (popoverRefs.current.file = el)} className="menu-popover">
                 <button onClick={() => runAndClose(onOpenImages)}>Open images</button>
-                <button onClick={() => runAndClose(onOpenClasses)}>Open classes</button>
+                <button onClick={() => runAndClose(onOpenImageFolder)}>Open image folder</button>
+                <button onClick={() => runAndClose(onOpenClasses)}>Import classes</button>
+                <button onClick={() => runAndClose(onImportDataset)}>Import dataset folder</button>
               </div>
             )}
           </div>
@@ -238,6 +266,7 @@ export function TopBar(): JSX.Element {
             {openMenu === 'export' && (
               <div ref={(el) => (popoverRefs.current.export = el)} className="menu-popover">
                 <button onClick={() => runAndClose(exportClassesTxt)}>Export classes TXT</button>
+                <button onClick={() => runAndClose(exportWorkspaceState)}>Export workspace state</button>
                 {exportButtons.map((b) => (
                   <button key={b.id} onClick={() => runAndClose(() => startExport(b.format, b.global))} disabled={!hasImages}>
                     {b.label}
@@ -269,6 +298,18 @@ export function TopBar(): JSX.Element {
                 </button>
                 <button onClick={() => runAndClose(async () => toggleAllVisibilityGlobal())} disabled={!hasImages}>
                   Toggle visibility (global)
+                </button>
+                <button onClick={() => runAndClose(async () => closeAllImages())} disabled={!hasImages}>
+                  Close all images
+                </button>
+                <button
+                  onClick={() => {
+                    closeMenus();
+                    setConfirmClearWorkspace(true);
+                  }}
+                  disabled={!hasImages}
+                >
+                  Clear workspace
                 </button>
               </div>
             )}
@@ -303,11 +344,11 @@ export function TopBar(): JSX.Element {
                   setInteractionMode('edit');
                   setAddingMode('click');
                   setShowLabels(true);
-                  setShowOnlySelectedThumbs(true);
                   setBBoxOpacity(0.2);
                   setLineThickness(2);
                   setDrawBoxFill(true);
                   setDrawBoxBorder(true);
+                  setShowCrosshair(true);
                   setDragDeadzonePx(4);
                   setSuppressUnassigned(false);
                   setExportIncludeUnassigned(false);
@@ -354,6 +395,29 @@ export function TopBar(): JSX.Element {
                     Continue
                   </button>
                   <button onClick={() => setPendingExport(null)}>Cancel</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmClearWorkspace && (
+        <div className="modal-backdrop" onClick={() => setConfirmClearWorkspace(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-stack">
+              <section>
+                <h4>Clear workspace</h4>
+                <p>This will remove all loaded images and their annotations from the current session.</p>
+                <div className="row dialog-actions">
+                  <button
+                    onClick={() => {
+                      clearWorkspace();
+                      setConfirmClearWorkspace(false);
+                    }}
+                  >
+                    Clear
+                  </button>
+                  <button onClick={() => setConfirmClearWorkspace(false)}>Cancel</button>
                 </div>
               </section>
             </div>

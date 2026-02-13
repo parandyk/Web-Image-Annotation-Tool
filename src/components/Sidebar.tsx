@@ -20,6 +20,7 @@ export function Sidebar(props: {
 
   return (
     <aside className="sidebar">
+      {/* Sidebar tabs only switch views; data/state is owned by the global store. */}
       <div className="tabs">
         {tabs.map((t) => (
           <button

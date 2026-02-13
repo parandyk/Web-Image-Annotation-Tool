@@ -12,10 +12,12 @@ export default function App(): JSX.Element {
   const selectedImage = useSelectedImage();
   const [sidebarTab, setSidebarTab] = useState<'general' | 'images' | 'classes' | 'settings'>('general');
 
+  // Ensure the fallback class/default view state exists before any user action.
   useEffect(() => {
     initializeDefaults();
   }, [initializeDefaults]);
 
+  // Global undo/redo shortcuts mirror desktop editors on both macOS and non-macOS.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const isMac = navigator.platform.toLowerCase().includes('mac');
@@ -47,6 +49,7 @@ export default function App(): JSX.Element {
   );
 
   return (
+    // Main shell: top command bar + workspace/canvas + right sidebar.
     <div className="app-shell">
       <TopBar />
       <div className="main-content">

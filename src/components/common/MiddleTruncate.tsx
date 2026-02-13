@@ -31,6 +31,7 @@ export function MiddleTruncate(props: { text: string; className?: string; title?
   }, []);
 
   const rendered = useMemo(() => {
+    // Binary-search the largest keep-size that fits so both start and end remain visible.
     if (!width || width <= 0) return text;
     if (measure(text) <= width) return text;
 

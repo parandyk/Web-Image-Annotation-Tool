@@ -22,6 +22,7 @@ export function useSortedFilteredImages(): ImageItem[] {
   const imageSort = useAppStore((s) => s.imageSort);
 
   return useMemo(() => {
+    // Work on a copy so sorting never mutates store state.
     let list = [...images];
 
     if (imageFilter === 'hideAnnotated') {
@@ -78,6 +79,7 @@ export function useSortedFilteredAnnotations(image: ImageItem | null): Annotatio
       list = list.filter((a) => a.classId !== defaultClass.id);
     }
 
+    // Local map avoids repeated lookups while sorting by class name.
     const classById = new Map(classes.map((c) => [c.id, c]));
 
     switch (annotationSort) {
@@ -114,6 +116,7 @@ export function useSortedFilteredClasses(): ClassData[] {
   const classSort = useAppStore((s) => s.classSort);
 
   return useMemo(() => {
+    // Precompute usage counts once and reuse for filtering + sort options.
     const countMap = new Map<string, number>();
 
     for (const c of classes) {

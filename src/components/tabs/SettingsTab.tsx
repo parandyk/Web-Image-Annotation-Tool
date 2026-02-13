@@ -5,11 +5,11 @@ export function SettingsTab(): JSX.Element {
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const showLabels = useAppStore((s) => s.showLabels);
-  const showOnlySelectedThumbs = useAppStore((s) => s.showOnlySelectedThumbs);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const lineThickness = useAppStore((s) => s.lineThickness);
   const drawBoxFill = useAppStore((s) => s.drawBoxFill);
   const drawBoxBorder = useAppStore((s) => s.drawBoxBorder);
+  const showCrosshair = useAppStore((s) => s.showCrosshair);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressUnassignedWarning = useAppStore((s) => s.suppressUnassignedExportWarningDialog);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
@@ -22,11 +22,11 @@ export function SettingsTab(): JSX.Element {
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const setAddingMode = useAppStore((s) => s.setAddingMode);
   const setShowLabels = useAppStore((s) => s.setShowLabels);
-  const setShowOnlySelectedThumbs = useAppStore((s) => s.setShowOnlySelectedThumbs);
   const setBBoxOpacity = useAppStore((s) => s.setBBoxOpacity);
   const setLineThickness = useAppStore((s) => s.setLineThickness);
   const setDrawBoxFill = useAppStore((s) => s.setDrawBoxFill);
   const setDrawBoxBorder = useAppStore((s) => s.setDrawBoxBorder);
+  const setShowCrosshair = useAppStore((s) => s.setShowCrosshair);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
   const setSuppressUnassigned = useAppStore((s) => s.setSuppressUnassignedExportWarningDialog);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
@@ -56,6 +56,7 @@ export function SettingsTab(): JSX.Element {
   const lastAnchorBulkRef = useRef(false);
   const lastVisibilityBulkRef = useRef(true);
 
+  // Tri-state checkboxes use `indeterminate` and remember last bulk choice for mixed state toggles.
   useEffect(() => {
     if (!anchorRef.current) return;
     anchorRef.current.indeterminate = mixedAnchored;
@@ -74,6 +75,7 @@ export function SettingsTab(): JSX.Element {
 
   const onToggleAllAnchoring = (): void => {
     if (!hasAnns) return;
+    // Mixed state resolves by flipping last explicit bulk decision.
     const target = mixedAnchored ? !lastAnchorBulkRef.current : !allAnchored;
     setAllAnchoringCurrentImage(target);
     lastAnchorBulkRef.current = target;
@@ -147,12 +149,8 @@ export function SettingsTab(): JSX.Element {
           <span>Draw box borders</span>
         </label>
         <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={showOnlySelectedThumbs}
-            onChange={(e) => setShowOnlySelectedThumbs(e.target.checked)}
-          />
-          <span>Show thumbs only for selected</span>
+          <input type="checkbox" checked={showCrosshair} onChange={(e) => setShowCrosshair(e.target.checked)} />
+          <span>Show crosshair</span>
         </label>
         <label>
           Annotation background opacity

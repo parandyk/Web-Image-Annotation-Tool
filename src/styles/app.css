@@ -22,6 +22,7 @@ body,
   background: radial-gradient(circle at top left, #1f2937, #0b0f14 60%);
   color: var(--text-0);
   font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif;
+  overflow-x: hidden;
 }
 
 button,
@@ -65,6 +66,8 @@ label.inline-check {
   height: 100%;
   display: grid;
   grid-template-rows: auto 1fr;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -141,11 +144,18 @@ label.inline-check {
   display: grid;
   grid-template-columns: 1fr 380px;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.main-content > * {
+  min-width: 0;
 }
 
 .workspace-panel {
   border-right: 1px solid var(--line);
   min-height: 0;
+  min-width: 0;
 }
 
 .workspace-empty {
@@ -164,30 +174,104 @@ label.inline-check {
 .canvas-toolbar {
   display: flex;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
 }
 
+.canvas-toolbar > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .canvas-container {
   min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.canvas-crosshair-mode {
+  cursor: none;
+}
+
+.workspace-crosshair-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+
+.crosshair-line-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(125, 211, 252, 0.9);
+  box-shadow:
+    0 0 0 1px rgba(2, 6, 23, 0.8),
+    0 0 6px rgba(56, 189, 248, 0.45);
+  transform: translateY(-0.5px);
+}
+
+.crosshair-line-v {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(125, 211, 252, 0.9);
+  box-shadow:
+    0 0 0 1px rgba(2, 6, 23, 0.8),
+    0 0 6px rgba(56, 189, 248, 0.45);
+  transform: translateX(-0.5px);
+}
+
+.crosshair-coords {
+  position: absolute;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid rgba(125, 211, 252, 0.9);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.92);
+  color: #f0f9ff;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  text-shadow:
+    0 1px 0 rgba(2, 6, 23, 0.95),
+    0 0 4px rgba(125, 211, 252, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(2, 6, 23, 0.85),
+    0 0 8px rgba(56, 189, 248, 0.25);
 }
 
 .sidebar {
   display: grid;
   grid-template-rows: auto 1fr;
   min-height: 0;
+  min-width: 0;
 }
 
 .tabs {
   display: grid;
-  grid-template-columns: auto repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.tabs button {
+  min-width: 0;
 }
 
 .tab-body {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 10px;
   padding-right: 14px;
@@ -196,6 +280,7 @@ label.inline-check {
 .panel-stack {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .panel-stack section {
@@ -205,6 +290,7 @@ label.inline-check {
   padding: 10px;
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .panel-stack h4 {
@@ -241,8 +327,12 @@ label.inline-check {
   max-height: 500px;
 }
 
+.general-coordinates-segment .segment-scroll {
+  max-height: 230px;
+}
+
 .general-classes-segment .class-name-mid {
-  max-width: 130px;
+  max-width: 100%;
 }
 
 .general-settings-segment .segment-scroll {
@@ -318,7 +408,9 @@ label.inline-check {
 }
 
 .class-name-btn {
-  max-width: 210px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .annotation-title-btn {
@@ -389,7 +481,9 @@ label.inline-check {
 }
 
 .class-name-mid {
-  max-width: 170px;
+  display: block;
+  width: 100%;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
@@ -400,6 +494,7 @@ label.inline-check {
   border-radius: 8px;
   padding: 8px;
   color: var(--text-1);
+  width: 100%;
 }
 
 .list-row.selected,
@@ -408,6 +503,12 @@ label.inline-check {
   box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.25);
   background: rgba(30, 64, 88, 0.22);
   border-radius: 8px;
+}
+
+.list-row.selected {
+  border-color: transparent;
+  box-shadow: none;
+  background: transparent;
 }
 
 .class-card.selected .row:first-child .grow,
@@ -551,6 +652,28 @@ label.inline-check {
   background: rgba(17, 24, 39, 0.45);
 }
 
+.rename-row {
+  width: 100%;
+}
+
+.rename-row .rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rename-row button {
+  flex: 0 0 auto;
+}
+
+.add-class-row {
+  width: 100%;
+}
+
+.add-class-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .icon-nav-btn {
   width: 36px;
   min-width: 36px;
@@ -578,7 +701,7 @@ label.inline-check {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -590,12 +713,23 @@ label.inline-check {
   overflow: hidden;
 }
 
+.images-tab-split .split-panel {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.images-tab-split .split-list-scroll,
+.images-tab-split .annotation-list-scroll {
+  min-height: 110px;
+}
+
 .split-list-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 6px;
+  padding-right: 0;
+  width: 100%;
 }
 
 .annotation-list-scroll {
@@ -604,6 +738,8 @@ label.inline-check {
   overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 6px;
+  padding-right: 0;
+  width: 100%;
 }
 
 .annotation-list-scroll .class-card {
@@ -617,6 +753,17 @@ label.inline-check {
   display: grid;
   gap: 8px;
   align-items: stretch;
+}
+
+.annotation-item.selected {
+  border: 1px solid var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.25);
+  background: rgba(30, 64, 88, 0.22);
+}
+
+.annotation-item.selected .annotation-title-btn {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.12);
 }
 
 .annotation-item .row.between {
@@ -637,11 +784,40 @@ label.inline-check {
 }
 
 .class-icon-actions {
+  display: inline-flex;
+  gap: 4px;
   flex-wrap: nowrap;
+  align-items: center;
 }
 
 .class-instance-actions {
-  flex-wrap: nowrap;
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.class-instance-actions button {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.class-actions-combined {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.class-actions-combined > .class-instance-actions {
+  min-width: 0;
 }
 
 .hovertip {
@@ -680,7 +856,7 @@ label.inline-check {
 
 .annotation-menu {
   position: fixed;
-  z-index: 30;
+  z-index: 180;
   display: grid;
   gap: 6px;
   padding: 8px;
@@ -695,6 +871,80 @@ label.inline-check {
 
 .warning-text {
   color: #fca5a5;
+}
+
+.coords-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.coords-source {
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.coords-class-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(31, 41, 55, 0.55);
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.coords-class-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 65%;
+  flex: 0 1 65%;
+  justify-content: flex-end;
+}
+
+.coords-class-badge .color-dot {
+  margin-right: 0;
+  flex: 0 0 auto;
+}
+
+.coords-class-name {
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.coords-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.coord-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(31, 41, 55, 0.55);
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.coord-key {
+  color: var(--text-1);
+}
+
+.coord-value {
+  margin-left: auto;
+  min-width: 62px;
+  text-align: right;
+  font-family: Consolas, 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
 @media (max-width: 1200px) {

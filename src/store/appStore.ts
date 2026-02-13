@@ -24,6 +24,7 @@ type Snapshot = {
   selectedClassId: string;
   selectedImageId: string | null;
   selectedAnnotationId: string | null;
+  selectedAnnotationIds?: string[];
   nextDisplayIdByClass: Record<string, number>;
 };
 
@@ -47,6 +48,7 @@ type ViewState = {
   lineThickness: number;
   drawBoxFill: boolean;
   drawBoxBorder: boolean;
+  showCrosshair: boolean;
   dragDeadzonePx: number;
 };
 
@@ -57,6 +59,8 @@ type AppState = ViewState & {
   selectedClassId: string;
   selectedImageId: string | null;
   selectedAnnotationId: string | null;
+  selectedAnnotationIds: string[];
+  liveDraftBBox: BBox | null;
   nextDisplayIdByClass: Record<string, number>;
   undoStack: Snapshot[];
   redoStack: Snapshot[];
@@ -76,6 +80,7 @@ type AppState = ViewState & {
   setLineThickness: (v: number) => void;
   setDrawBoxFill: (v: boolean) => void;
   setDrawBoxBorder: (v: boolean) => void;
+  setShowCrosshair: (v: boolean) => void;
   setDragDeadzonePx: (v: number) => void;
   setSuppressUnassignedExportWarningDialog: (v: boolean) => void;
   setSuppressDeleteAnnotationWarningDialog: (v: boolean) => void;
@@ -83,12 +88,18 @@ type AppState = ViewState & {
   setSuppressRemoveClassInstancesWarningDialog: (v: boolean) => void;
   setExportIncludeUnassigned: (v: boolean) => void;
   setStatusText: (v: string | null) => void;
+  setLiveDraftBBox: (bbox: BBox | null) => void;
 
   openImages: (files: File[]) => Promise<void>;
+  importDatasetFolder: (files: File[]) => Promise<void>;
   openClassFileText: (content: string) => void;
   selectImage: (imageId: string | null) => void;
   selectClass: (classId: string) => void;
   selectAnnotation: (annotationId: string | null) => void;
+  setAnnotationSelection: (annotationIds: string[], latestId?: string | null) => void;
+  toggleAnnotationSelection: (annotationId: string) => void;
+  clearAnnotationSelection: () => void;
+  selectAllAnnotationsCurrentImage: () => void;
 
   addClass: (name: string) => void;
   renameClass: (classId: string, newName: string) => void;
@@ -103,9 +114,13 @@ type AppState = ViewState & {
   addAnnotation: (bbox: BBox) => void;
   updateAnnotationBBox: (annotationId: string, bbox: BBox) => void;
   setAnnotationClass: (annotationId: string, classId: string) => void;
+  setAnnotationsClass: (annotationIds: string[], classId: string) => void;
   toggleAnnotationVisibility: (annotationId: string) => void;
   toggleAnnotationAnchoring: (annotationId: string) => void;
+  toggleAnnotationsVisibility: (annotationIds: string[]) => void;
+  toggleAnnotationsAnchoring: (annotationIds: string[]) => void;
   deleteAnnotation: (annotationId: string) => void;
+  deleteSelectedAnnotations: () => void;
   removeLastBBox: () => void;
   removeAllBBoxes: () => void;
   removeAllBBoxesGlobal: () => void;
@@ -122,16 +137,21 @@ type AppState = ViewState & {
   moveToPrevAnnotation: () => void;
 
   deleteImage: (imageId: string) => void;
+  deleteImages: (imageIds: string[]) => void;
+  closeAllImages: () => void;
+  clearWorkspace: () => void;
 
   undo: () => void;
   redo: () => void;
 
   exportClassesTxt: () => Promise<void>;
   exportAnnotations: (format: ExportAnnotationFormat, global: boolean, includeFallback?: boolean) => Promise<void>;
+  exportWorkspaceState: () => Promise<void>;
 };
 
 const FALLBACK_CLASS_NAME = 'Unassigned';
 
+// Snapshot payload is the source of truth for undo/redo transitions.
 function cloneSnapshot(s: Snapshot): Snapshot {
   return {
     classes: s.classes.map((c) => ({ ...c })),
@@ -145,6 +165,7 @@ function cloneSnapshot(s: Snapshot): Snapshot {
     selectedClassId: s.selectedClassId,
     selectedImageId: s.selectedImageId,
     selectedAnnotationId: s.selectedAnnotationId,
+    selectedAnnotationIds: [...(s.selectedAnnotationIds ?? (s.selectedAnnotationId ? [s.selectedAnnotationId] : []))],
     nextDisplayIdByClass: { ...s.nextDisplayIdByClass },
   };
 }
@@ -164,6 +185,7 @@ function normalizeBBox(b: BBox, maxW: number, maxH: number): BBox {
 }
 
 function sanitizeClassName(input: string): string {
+  // Normalize user-entered class names to safe, export-friendly identifiers.
   return input
     .trim()
     .replace(/\s+/g, '_')
@@ -193,6 +215,112 @@ function toUniqueName(rawName: string, taken: Set<string>): string {
   }
 }
 
+type DirectoryEntry = {
+  file: File;
+  relPath: string;
+  relPathLower: string;
+  nameLower: string;
+  baseNameLower: string;
+  extLower: string;
+};
+
+const IMAGE_FILE_RE = /\.(jpg|jpeg|png|bmp|tiff|tif|webp)$/i;
+
+function basename(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] ?? path;
+}
+
+function basenameWithoutExt(path: string): string {
+  return basename(path).replace(/\.[^.]+$/, '');
+}
+
+function fileRelativePath(file: File): string {
+  const withRelative = file as File & { webkitRelativePath?: string };
+  return (withRelative.webkitRelativePath || file.name).replace(/\\/g, '/').replace(/^\.?\//, '');
+}
+
+function toDirectoryEntries(files: File[]): DirectoryEntry[] {
+  // Keep both original relative paths and lowercase variants for robust dataset matching.
+  return files.map((file) => {
+    const relPath = fileRelativePath(file);
+    const relPathLower = relPath.toLowerCase();
+    const name = basename(relPath);
+    const extIdx = name.lastIndexOf('.');
+    return {
+      file,
+      relPath,
+      relPathLower,
+      nameLower: name.toLowerCase(),
+      baseNameLower: basenameWithoutExt(name).toLowerCase(),
+      extLower: extIdx >= 0 ? name.slice(extIdx).toLowerCase() : '',
+    };
+  });
+}
+
+function isImageEntry(entry: DirectoryEntry): boolean {
+  return IMAGE_FILE_RE.test(entry.nameLower);
+}
+
+async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const src = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+      URL.revokeObjectURL(src);
+    };
+    image.onerror = (error) => {
+      URL.revokeObjectURL(src);
+      reject(error);
+    };
+    image.src = src;
+  });
+}
+
+function parseYoloNamesFromYaml(content: string): string[] {
+  // Accept both "names: [..]" and indexed "0: name" YAML styles.
+  const mapped: Array<[number, string]> = [];
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s*:\s*(.+?)\s*$/);
+    if (!match) continue;
+    const idx = Number(match[1]);
+    const name = match[2].trim().replace(/^['"]|['"]$/g, '');
+    if (Number.isFinite(idx) && name) {
+      mapped.push([idx, name]);
+    }
+  }
+  if (mapped.length > 0) {
+    mapped.sort((a, b) => a[0] - b[0]);
+    return mapped.map(([, name]) => name).filter(Boolean);
+  }
+
+  const inline = content.match(/names\s*:\s*\[(.*?)\]/s);
+  if (inline) {
+    return inline[1]
+      .split(',')
+      .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function getNextDisplayIdForImage(
+  nextDisplayIdByClass: Record<string, number>,
+  images: ImageItem[],
+  imageId: string
+): number {
+  // Display IDs are per-image and monotonic for stable labels in a session.
+  const direct = nextDisplayIdByClass[imageId];
+  if (Number.isFinite(direct) && direct >= 1) {
+    return Math.max(1, Math.floor(direct));
+  }
+  const image = images.find((img) => img.id === imageId);
+  const maxDisplayId = image?.annotations.reduce((max, ann) => Math.max(max, ann.displayId ?? 0), 0) ?? 0;
+  return maxDisplayId + 1;
+}
+
 function getDefaultViewState(): ViewState {
   return {
     interactionMode: 'edit',
@@ -214,7 +342,34 @@ function getDefaultViewState(): ViewState {
     lineThickness: 2,
     drawBoxFill: true,
     drawBoxBorder: true,
+    showCrosshair: true,
     dragDeadzonePx: 4,
+  };
+}
+
+function toViewStateSnapshot(state: ViewState): ViewState {
+  return {
+    interactionMode: state.interactionMode,
+    addingMode: state.addingMode,
+    imageSort: state.imageSort,
+    imageFilter: state.imageFilter,
+    annotationSort: state.annotationSort,
+    annotationFilter: state.annotationFilter,
+    classSort: state.classSort,
+    classFilter: state.classFilter,
+    suppressUnassignedExportWarningDialog: state.suppressUnassignedExportWarningDialog,
+    suppressDeleteAnnotationWarningDialog: state.suppressDeleteAnnotationWarningDialog,
+    suppressDeleteImageWarningDialog: state.suppressDeleteImageWarningDialog,
+    suppressRemoveClassInstancesWarningDialog: state.suppressRemoveClassInstancesWarningDialog,
+    exportIncludeUnassigned: state.exportIncludeUnassigned,
+    showLabels: state.showLabels,
+    showOnlySelectedThumbs: state.showOnlySelectedThumbs,
+    bboxOpacity: state.bboxOpacity,
+    lineThickness: state.lineThickness,
+    drawBoxFill: state.drawBoxFill,
+    drawBoxBorder: state.drawBoxBorder,
+    showCrosshair: state.showCrosshair,
+    dragDeadzonePx: state.dragDeadzonePx,
   };
 }
 
@@ -228,6 +383,7 @@ function downloadBlob(blob: Blob, fileName: string): void {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  // --- View/UI state ---
   ...getDefaultViewState(),
   statusText: null,
   classes: [],
@@ -235,10 +391,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedClassId: '',
   selectedImageId: null,
   selectedAnnotationId: null,
+  selectedAnnotationIds: [],
+  liveDraftBBox: null,
   nextDisplayIdByClass: {},
   undoStack: [],
   redoStack: [],
 
+  // --- Initialization ---
   initializeDefaults: () => {
     const existing = get().classes;
     if (existing.length > 0) {
@@ -258,7 +417,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...state,
       classes: [fallback],
       selectedClassId: fallbackId,
-      nextDisplayIdByClass: { [fallbackId]: 1 },
+      nextDisplayIdByClass: {},
     }));
   },
 
@@ -276,6 +435,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLineThickness: (v) => set({ lineThickness: v }),
   setDrawBoxFill: (v) => set({ drawBoxFill: v }),
   setDrawBoxBorder: (v) => set({ drawBoxBorder: v }),
+  setShowCrosshair: (v) => set({ showCrosshair: v }),
   setDragDeadzonePx: (v) => set({ dragDeadzonePx: Math.max(0, Math.floor(v)) }),
   setSuppressUnassignedExportWarningDialog: (v) => set({ suppressUnassignedExportWarningDialog: v }),
   setSuppressDeleteAnnotationWarningDialog: (v) => set({ suppressDeleteAnnotationWarningDialog: v }),
@@ -283,7 +443,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSuppressRemoveClassInstancesWarningDialog: (v) => set({ suppressRemoveClassInstancesWarningDialog: v }),
   setExportIncludeUnassigned: (v) => set({ exportIncludeUnassigned: v }),
   setStatusText: (v) => set({ statusText: v }),
+  setLiveDraftBBox: (bbox) => set({ liveDraftBBox: bbox }),
 
+  // --- Import/open actions ---
   openImages: async (files) => {
     const current = get();
     if (files.length === 0) return;
@@ -294,6 +456,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: current.selectedClassId,
       selectedImageId: current.selectedImageId,
       selectedAnnotationId: current.selectedAnnotationId,
+      selectedAnnotationIds: [...current.selectedAnnotationIds],
       nextDisplayIdByClass: current.nextDisplayIdByClass,
     };
 
@@ -323,9 +486,396 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       images: [...state.images, ...newImages],
       selectedImageId: state.selectedImageId ?? newImages[0]?.id ?? null,
-      selectedAnnotationId: null,
+      selectedAnnotationId: state.selectedImageId ? state.selectedAnnotationId : null,
+      selectedAnnotationIds: state.selectedImageId ? state.selectedAnnotationIds : [],
+      nextDisplayIdByClass: {
+        ...state.nextDisplayIdByClass,
+        ...Object.fromEntries(newImages.map((img) => [img.id, 1])),
+      },
       undoStack: [...state.undoStack, cloneSnapshot(base)],
       redoStack: [],
+    }));
+  },
+
+  importDatasetFolder: async (files) => {
+    const state = get();
+    if (files.length === 0) return;
+
+    const entries = toDirectoryEntries(files);
+    const imageEntries = entries.filter(isImageEntry);
+    if (imageEntries.length === 0) {
+      set({ statusText: 'No images found in selected folder.' });
+      return;
+    }
+
+    const jsonEntries = entries.filter((e) => e.extLower === '.json');
+    const cocoJsonEntry =
+      jsonEntries.find((e) => basename(e.relPathLower) === 'instances_default.json') ??
+      jsonEntries.find((e) => basename(e.relPathLower).startsWith('instances'));
+    const classesEntry = entries.find((e) => e.nameLower === 'classes.txt') ?? null;
+    const yoloYamlEntry =
+      entries.find((e) => e.nameLower === 'data.yaml') ??
+      entries.find((e) => e.nameLower === 'data.yml') ??
+      null;
+    const yoloLabelEntries = entries.filter((e) => e.extLower === '.txt' && e.relPathLower.includes('/labels/'));
+
+    const format: 'coco' | 'yolo' | null = cocoJsonEntry
+      ? 'coco'
+      : classesEntry || yoloYamlEntry || yoloLabelEntries.length > 0
+        ? 'yolo'
+        : null;
+
+    if (!format) {
+      set({ statusText: 'Dataset format not recognized. Expected COCO or YOLO export folder.' });
+      return;
+    }
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    const workingClasses = state.classes.map((c) => ({ ...c }));
+    const takenNames = new Set(state.images.map((i) => i.name));
+    const nextDisplayIdByClass: Record<string, number> = { ...state.nextDisplayIdByClass };
+    for (const img of state.images) {
+      const nextValue = img.annotations.reduce((max, ann) => Math.max(max, (ann.displayId ?? 0) + 1), 1);
+      nextDisplayIdByClass[img.id] = Math.max(nextDisplayIdByClass[img.id] ?? 1, nextValue);
+    }
+
+    const classIdByLowerName = new Map(workingClasses.map((c) => [c.name.toLowerCase(), c.id]));
+    const ensureFallbackClass = (): string => {
+      const existing = workingClasses.find((c) => c.isDefault);
+      if (existing) {
+        return existing.id;
+      }
+      const fallbackId = uid('class');
+      const fallback: ClassData = {
+        id: fallbackId,
+        name: FALLBACK_CLASS_NAME,
+        color: '#27272A',
+        isVisible: true,
+        isDefault: true,
+      };
+      workingClasses.unshift(fallback);
+      classIdByLowerName.set(fallback.name.toLowerCase(), fallback.id);
+      return fallback.id;
+    };
+    const fallbackClassId = ensureFallbackClass();
+
+    const ensureClassId = (rawName: string): string => {
+      const trimmed = rawName.trim();
+      if (!trimmed) return fallbackClassId;
+      const existing = classIdByLowerName.get(trimmed.toLowerCase());
+      if (existing) return existing;
+
+      const sanitized = sanitizeClassName(trimmed) || trimmed.replace(/\s+/g, '_');
+      const newClass: ClassData = {
+        id: uid('class'),
+        name: sanitized,
+        color: getClassColor(workingClasses.length),
+        isVisible: true,
+      };
+      workingClasses.push(newClass);
+      classIdByLowerName.set(trimmed.toLowerCase(), newClass.id);
+      classIdByLowerName.set(newClass.name.toLowerCase(), newClass.id);
+      return newClass.id;
+    };
+
+    const allocateDisplayId = (imageId: string): number => {
+      const current = nextDisplayIdByClass[imageId] ?? 1;
+      nextDisplayIdByClass[imageId] = current + 1;
+      return current;
+    };
+
+    const newImages: ImageItem[] = [];
+    let importedAnnotationCount = 0;
+    let skippedAnnotations = 0;
+
+    if (format === 'yolo') {
+      // YOLO import expects class names + per-image txt labels in normalized coordinates.
+      let classNames: string[] = [];
+      if (classesEntry) {
+        classNames = (await classesEntry.file.text())
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+      }
+      if (classNames.length === 0 && yoloYamlEntry) {
+        classNames = parseYoloNamesFromYaml(await yoloYamlEntry.file.text());
+      }
+      if (classNames.length === 0) {
+        set({ statusText: 'YOLO dataset import failed: classes.txt or names in data.yaml not found.' });
+        return;
+      }
+
+      const classIdsByIndex = classNames.map((name) => ensureClassId(name));
+      const labelByBaseName = new Map<string, File>();
+      for (const labelEntry of yoloLabelEntries) {
+        if (!labelByBaseName.has(labelEntry.baseNameLower)) {
+          labelByBaseName.set(labelEntry.baseNameLower, labelEntry.file);
+        }
+      }
+
+      const preferredImages = imageEntries.filter((e) => e.relPathLower.includes('/images/'));
+      const sourceImages = preferredImages.length > 0 ? preferredImages : imageEntries;
+      for (const imageEntry of sourceImages) {
+        const importedImageId = uid('img');
+        let dims: { width: number; height: number };
+        try {
+          dims = await getImageDimensions(imageEntry.file);
+        } catch {
+          continue;
+        }
+
+        const annotations: Annotation[] = [];
+        const labelFile = labelByBaseName.get(imageEntry.baseNameLower) ?? null;
+        if (labelFile) {
+          const labelContent = await labelFile.text();
+          for (const line of labelContent.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const parts = trimmed.split(/\s+/);
+            if (parts.length < 5) {
+              skippedAnnotations += 1;
+              continue;
+            }
+            const classIdx = Number(parts[0]);
+            const cx = Number(parts[1]);
+            const cy = Number(parts[2]);
+            const w = Number(parts[3]);
+            const h = Number(parts[4]);
+            if (!Number.isInteger(classIdx) || classIdx < 0 || classIdx >= classIdsByIndex.length) {
+              skippedAnnotations += 1;
+              continue;
+            }
+            if (![cx, cy, w, h].every((v) => Number.isFinite(v))) {
+              skippedAnnotations += 1;
+              continue;
+            }
+
+            const widthPx = w * dims.width;
+            const heightPx = h * dims.height;
+            const bbox = normalizeBBox(
+              {
+                x: cx * dims.width - widthPx / 2,
+                y: cy * dims.height - heightPx / 2,
+                width: widthPx,
+                height: heightPx,
+              },
+              dims.width,
+              dims.height
+            );
+            if (bbox.width < 1 || bbox.height < 1) {
+              skippedAnnotations += 1;
+              continue;
+            }
+
+            const classId = classIdsByIndex[classIdx];
+            annotations.push({
+              id: uid('ann'),
+              classId,
+              bbox,
+              isVisible: true,
+              isAnchored: false,
+              displayId: allocateDisplayId(importedImageId),
+            });
+            importedAnnotationCount += 1;
+          }
+        }
+
+        const src = URL.createObjectURL(imageEntry.file);
+        nextDisplayIdByClass[importedImageId] = Math.max(
+          nextDisplayIdByClass[importedImageId] ?? 1,
+          annotations.reduce((max, ann) => Math.max(max, (ann.displayId ?? 0) + 1), 1)
+        );
+        newImages.push({
+          id: importedImageId,
+          name: toUniqueName(imageEntry.file.name, takenNames),
+          file: imageEntry.file,
+          src,
+          width: dims.width,
+          height: dims.height,
+          annotations,
+        });
+      }
+    } else {
+      // COCO import builds classes from categories and maps image_id/category_id references.
+      if (!cocoJsonEntry) {
+        set({ statusText: 'COCO dataset import failed: instances JSON was not found.' });
+        return;
+      }
+
+      let coco: {
+        images?: Array<{ id: number | string; file_name: string; width?: number; height?: number }>;
+        categories?: Array<{ id: number | string; name: string }>;
+        annotations?: Array<{
+          image_id: number | string;
+          category_id: number | string;
+          bbox: [number, number, number, number];
+        }>;
+      };
+      try {
+        coco = JSON.parse(await cocoJsonEntry.file.text());
+      } catch {
+        set({ statusText: 'COCO dataset import failed: invalid JSON format.' });
+        return;
+      }
+
+      const cocoImages = Array.isArray(coco.images) ? coco.images : [];
+      const cocoCategories = Array.isArray(coco.categories) ? coco.categories : [];
+      const cocoAnnotations = Array.isArray(coco.annotations) ? coco.annotations : [];
+      if (cocoImages.length === 0) {
+        set({ statusText: 'COCO dataset import failed: no images in instances file.' });
+        return;
+      }
+
+      const classIdByCategoryId = new Map<number, string>();
+      for (const category of cocoCategories) {
+        const categoryId = Number(category.id);
+        if (!Number.isFinite(categoryId)) continue;
+        classIdByCategoryId.set(categoryId, ensureClassId(String(category.name ?? `Class_${categoryId}`)));
+      }
+
+      const imageByRelativePath = new Map(imageEntries.map((entry) => [entry.relPathLower, entry]));
+      const imageByBaseName = new Map<string, DirectoryEntry[]>();
+      for (const imageEntry of imageEntries) {
+        const base = basename(imageEntry.relPathLower);
+        const list = imageByBaseName.get(base) ?? [];
+        list.push(imageEntry);
+        imageByBaseName.set(base, list);
+      }
+
+      const resolveCocoImageEntry = (fileNameRaw: string): DirectoryEntry | null => {
+        const normalized = fileNameRaw.replace(/\\/g, '/').replace(/^\.?\//, '').toLowerCase();
+        if (!normalized) return null;
+
+        const direct = imageByRelativePath.get(normalized);
+        if (direct) return direct;
+
+        const normalizedWithoutImages = normalized.replace(/^images\//, '');
+        const withImages = imageByRelativePath.get(`images/${normalizedWithoutImages}`);
+        if (withImages) return withImages;
+
+        const suffixMatch = imageEntries.find(
+          (entry) =>
+            entry.relPathLower.endsWith(`/${normalized}`) ||
+            entry.relPathLower.endsWith(`/${normalizedWithoutImages}`) ||
+            entry.relPathLower.endsWith(`/images/${normalizedWithoutImages}`)
+        );
+        if (suffixMatch) return suffixMatch;
+
+        const byBase = imageByBaseName.get(basename(normalizedWithoutImages));
+        if (!byBase || byBase.length === 0) return null;
+        return byBase[0];
+      };
+
+      const importedByCocoImageId = new Map<number, ImageItem>();
+      for (const cocoImage of cocoImages) {
+        const cocoImageId = Number(cocoImage.id);
+        if (!Number.isFinite(cocoImageId)) continue;
+
+        const fileName = String(cocoImage.file_name ?? '').trim();
+        if (!fileName) continue;
+        const imageEntry = resolveCocoImageEntry(fileName);
+        if (!imageEntry) continue;
+
+        let dims: { width: number; height: number };
+        const width = Number(cocoImage.width);
+        const height = Number(cocoImage.height);
+        if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+          dims = { width, height };
+        } else {
+          try {
+            dims = await getImageDimensions(imageEntry.file);
+          } catch {
+            continue;
+          }
+        }
+
+        const src = URL.createObjectURL(imageEntry.file);
+        const imageItem: ImageItem = {
+          id: uid('img'),
+          name: toUniqueName(imageEntry.file.name, takenNames),
+          file: imageEntry.file,
+          src,
+          width: dims.width,
+          height: dims.height,
+          annotations: [],
+        };
+        nextDisplayIdByClass[imageItem.id] = Math.max(nextDisplayIdByClass[imageItem.id] ?? 1, 1);
+        newImages.push(imageItem);
+        importedByCocoImageId.set(cocoImageId, imageItem);
+      }
+
+      for (const cocoAnnotation of cocoAnnotations) {
+        const imageId = Number(cocoAnnotation.image_id);
+        const categoryId = Number(cocoAnnotation.category_id);
+        const imageItem = importedByCocoImageId.get(imageId);
+        if (!imageItem) {
+          skippedAnnotations += 1;
+          continue;
+        }
+
+        const classId = classIdByCategoryId.get(categoryId) ?? fallbackClassId;
+        const bboxRaw = Array.isArray(cocoAnnotation.bbox) ? cocoAnnotation.bbox : [];
+        if (bboxRaw.length < 4) {
+          skippedAnnotations += 1;
+          continue;
+        }
+        const x = Number(bboxRaw[0]);
+        const y = Number(bboxRaw[1]);
+        const w = Number(bboxRaw[2]);
+        const h = Number(bboxRaw[3]);
+        if (![x, y, w, h].every((v) => Number.isFinite(v))) {
+          skippedAnnotations += 1;
+          continue;
+        }
+
+        const bbox = normalizeBBox({ x, y, width: w, height: h }, imageItem.width, imageItem.height);
+        if (bbox.width < 1 || bbox.height < 1) {
+          skippedAnnotations += 1;
+          continue;
+        }
+
+        imageItem.annotations.push({
+          id: uid('ann'),
+          classId,
+          bbox,
+          isVisible: true,
+          isAnchored: false,
+          displayId: allocateDisplayId(imageItem.id),
+        });
+        importedAnnotationCount += 1;
+      }
+    }
+
+    if (newImages.length === 0) {
+      set({ statusText: `No images were imported from ${format.toUpperCase()} dataset.` });
+      return;
+    }
+
+    const selectedClassId =
+      workingClasses.some((c) => c.id === state.selectedClassId) && state.selectedClassId
+        ? state.selectedClassId
+        : fallbackClassId;
+
+    set((s) => ({
+      classes: workingClasses,
+      images: [...s.images, ...newImages],
+      selectedClassId,
+      selectedImageId: s.selectedImageId ?? newImages[0]?.id ?? null,
+      selectedAnnotationId: s.selectedImageId ? s.selectedAnnotationId : null,
+      selectedAnnotationIds: s.selectedImageId ? s.selectedAnnotationIds : [],
+      nextDisplayIdByClass,
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+      statusText: `Imported ${format.toUpperCase()} dataset: ${newImages.length} images, ${importedAnnotationCount} annotations${skippedAnnotations > 0 ? `, ${skippedAnnotations} skipped` : ''}.`,
     }));
   },
 
@@ -340,10 +890,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  selectImage: (imageId) => set({ selectedImageId: imageId, selectedAnnotationId: null }),
+  selectImage: (imageId) =>
+    set({ selectedImageId: imageId, selectedAnnotationId: null, selectedAnnotationIds: [], liveDraftBBox: null }),
   selectClass: (classId) => set({ selectedClassId: classId }),
-  selectAnnotation: (annotationId) => set({ selectedAnnotationId: annotationId }),
+  selectAnnotation: (annotationId) =>
+    set({ selectedAnnotationId: annotationId, selectedAnnotationIds: annotationId ? [annotationId] : [] }),
+  setAnnotationSelection: (annotationIds, latestId = null) => {
+    const unique = Array.from(new Set(annotationIds));
+    const resolvedLatest =
+      latestId && unique.includes(latestId) ? latestId : unique.length > 0 ? unique[unique.length - 1] : null;
+    set({ selectedAnnotationIds: unique, selectedAnnotationId: resolvedLatest });
+  },
+  toggleAnnotationSelection: (annotationId) =>
+    set((s) => {
+      const exists = s.selectedAnnotationIds.includes(annotationId);
+      if (exists) {
+        const next = s.selectedAnnotationIds.filter((id) => id !== annotationId);
+        return {
+          selectedAnnotationIds: next,
+          selectedAnnotationId: next.length > 0 ? next[next.length - 1] : null,
+        };
+      }
+      return {
+        selectedAnnotationIds: [...s.selectedAnnotationIds, annotationId],
+        selectedAnnotationId: annotationId,
+      };
+    }),
+  clearAnnotationSelection: () => set({ selectedAnnotationId: null, selectedAnnotationIds: [] }),
+  selectAllAnnotationsCurrentImage: () => {
+    const state = get();
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image || image.annotations.length === 0) return;
+    const ids = image.annotations.map((a) => a.id);
+    set({ selectedAnnotationIds: ids, selectedAnnotationId: ids[ids.length - 1] ?? null });
+  },
 
+  // --- Class management ---
   addClass: (name) => {
     const sanitized = sanitizeClassName(name);
     if (!sanitized || !/[A-Za-z0-9]/.test(sanitized)) {
@@ -363,6 +945,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -375,7 +958,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set((s) => ({
       classes: [...s.classes, newClass],
-      nextDisplayIdByClass: { ...s.nextDisplayIdByClass, [newClass.id]: 1 },
       selectedClassId: s.selectedClassId,
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
@@ -387,9 +969,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cls = state.classes.find((c) => c.id === classId);
     if (!cls || cls.isDefault) return;
 
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    if (state.classes.some((c) => c.id !== classId && c.name.toLowerCase() === trimmed.toLowerCase())) return;
+    const sanitized = sanitizeClassName(newName);
+    if (!sanitized || !/[A-Za-z0-9]/.test(sanitized)) {
+      set({ statusText: 'Class name must contain letters or digits.' });
+      return;
+    }
+    if (state.classes.some((c) => c.id !== classId && c.name.toLowerCase() === sanitized.toLowerCase())) {
+      set({ statusText: `Class "${sanitized}" already exists.` });
+      return;
+    }
 
     const base: Snapshot = {
       classes: state.classes,
@@ -397,11 +985,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
     set((s) => ({
-      classes: s.classes.map((c) => (c.id === classId ? { ...c, name: trimmed } : c)),
+      classes: s.classes.map((c) => (c.id === classId ? { ...c, name: sanitized } : c)),
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -418,17 +1007,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
     const selectedImage = state.images.find((i) => i.id === state.selectedImageId) ?? null;
     const selectedAnnotation = selectedImage?.annotations.find((a) => a.id === state.selectedAnnotationId) ?? null;
+    const selectedAnnotationById = new Map((selectedImage?.annotations ?? []).map((a) => [a.id, a]));
     const nextVisible = !cls.isVisible;
 
     set((s) => ({
       classes: s.classes.map((c) => (c.id === classId ? { ...c, isVisible: nextVisible } : c)),
-      selectedAnnotationId:
-        !nextVisible && selectedAnnotation?.classId === classId ? null : s.selectedAnnotationId,
+      selectedAnnotationIds: !nextVisible
+        ? s.selectedAnnotationIds.filter((id) => selectedAnnotationById.get(id)?.classId !== classId)
+        : s.selectedAnnotationIds,
+      selectedAnnotationId: !nextVisible
+        ? (() => {
+            const filtered = s.selectedAnnotationIds.filter((id) => selectedAnnotationById.get(id)?.classId !== classId);
+            if (filtered.length > 0) return filtered[filtered.length - 1];
+            return !nextVisible && selectedAnnotation?.classId === classId ? null : s.selectedAnnotationId;
+          })()
+        : s.selectedAnnotationId,
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -448,6 +1047,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -479,6 +1079,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -490,6 +1091,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       })),
       selectedClassId: s.classes.find((c) => c.isDefault)?.id ?? s.selectedClassId,
       selectedAnnotationId: null,
+      selectedAnnotationIds: [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -513,6 +1115,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -538,6 +1141,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -547,6 +1151,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         annotations: img.annotations.filter((a) => a.classId !== classId),
       })),
       selectedAnnotationId: null,
+      selectedAnnotationIds: [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -566,6 +1171,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -581,6 +1187,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  // --- Annotation management ---
   addAnnotation: (bbox) => {
     const state = get();
     const image = state.images.find((i) => i.id === state.selectedImageId);
@@ -591,7 +1198,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (normalized.width < minSize || normalized.height < minSize) return;
 
     const classId = state.selectedClassId;
-    const displayId = state.nextDisplayIdByClass[classId] ?? 1;
+    const displayId = getNextDisplayIdForImage(state.nextDisplayIdByClass, state.images, image.id);
 
     const base: Snapshot = {
       classes: state.classes,
@@ -599,6 +1206,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -618,9 +1226,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           : img
       ),
       selectedAnnotationId: newAnn.id,
+      selectedAnnotationIds: [newAnn.id],
       nextDisplayIdByClass: {
         ...s.nextDisplayIdByClass,
-        [classId]: displayId + 1,
+        [image.id]: displayId + 1,
       },
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
@@ -644,6 +1253,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -673,6 +1283,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -692,6 +1303,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  setAnnotationsClass: (annotationIds, classId) => {
+    const state = get();
+    if (!state.classes.some((c) => c.id === classId)) return;
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image || annotationIds.length === 0) return;
+    const targetIds = new Set(annotationIds.filter((id) => image.annotations.some((a) => a.id === id)));
+    if (targetIds.size === 0) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        img.id !== s.selectedImageId
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((a) =>
+                targetIds.has(a.id) ? { ...a, classId } : a
+              ),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
   toggleAnnotationVisibility: (annotationId) => {
     const state = get();
     const image = state.images.find((i) => i.id === state.selectedImageId);
@@ -703,6 +1348,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -733,6 +1379,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -752,6 +1399,79 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  toggleAnnotationsVisibility: (annotationIds) => {
+    const state = get();
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image || annotationIds.length === 0) return;
+    const targetIds = new Set(annotationIds.filter((id) => image.annotations.some((a) => a.id === id)));
+    if (targetIds.size === 0) return;
+    const selected = image.annotations.filter((a) => targetIds.has(a.id));
+    const setVisible = selected.some((a) => !a.isVisible);
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        img.id !== s.selectedImageId
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((a) =>
+                targetIds.has(a.id) ? { ...a, isVisible: setVisible } : a
+              ),
+            }
+      ),
+      selectedAnnotationId: setVisible ? s.selectedAnnotationId : null,
+      selectedAnnotationIds: setVisible ? s.selectedAnnotationIds : [],
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  toggleAnnotationsAnchoring: (annotationIds) => {
+    const state = get();
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image || annotationIds.length === 0) return;
+    const targetIds = new Set(annotationIds.filter((id) => image.annotations.some((a) => a.id === id)));
+    if (targetIds.size === 0) return;
+    const selected = image.annotations.filter((a) => targetIds.has(a.id));
+    const setAnchored = selected.some((a) => !a.isAnchored);
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        img.id !== s.selectedImageId
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((a) =>
+                targetIds.has(a.id) ? { ...a, isAnchored: setAnchored } : a
+              ),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  // --- Bulk delete helpers ---
   deleteAnnotation: (annotationId) => {
     const state = get();
     const image = state.images.find((i) => i.id === state.selectedImageId);
@@ -763,6 +1483,48 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => {
+      const selectedAnnotationIds = s.selectedAnnotationIds.filter((id) => id !== annotationId);
+      return {
+        images: s.images.map((img) =>
+          img.id !== s.selectedImageId
+            ? img
+            : {
+                ...img,
+                annotations: img.annotations.filter((a) => a.id !== annotationId),
+              }
+        ),
+        selectedAnnotationIds,
+        selectedAnnotationId:
+          selectedAnnotationIds.length > 0
+            ? selectedAnnotationIds[selectedAnnotationIds.length - 1]
+            : s.selectedAnnotationId === annotationId
+              ? null
+              : s.selectedAnnotationId,
+        undoStack: [...s.undoStack, cloneSnapshot(base)],
+        redoStack: [],
+      };
+    });
+  },
+
+  deleteSelectedAnnotations: () => {
+    const state = get();
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image || state.selectedAnnotationIds.length === 0) return;
+    const selected = new Set(state.selectedAnnotationIds);
+    if (!image.annotations.some((a) => selected.has(a.id))) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -772,10 +1534,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? img
           : {
               ...img,
-              annotations: img.annotations.filter((a) => a.id !== annotationId),
+              annotations: img.annotations.filter((a) => !selected.has(a.id)),
             }
       ),
-      selectedAnnotationId: s.selectedAnnotationId === annotationId ? null : s.selectedAnnotationId,
+      selectedAnnotationId: null,
+      selectedAnnotationIds: [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -801,6 +1564,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -809,6 +1573,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         img.id === s.selectedImageId ? { ...img, annotations: [] } : img
       ),
       selectedAnnotationId: null,
+      selectedAnnotationIds: [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -824,17 +1589,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
     set((s) => ({
       images: s.images.map((img) => ({ ...img, annotations: [] })),
       selectedAnnotationId: null,
+      selectedAnnotationIds: [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
   },
 
+  // --- Whole-image visibility/anchoring toggles ---
   toggleAllAnchoringCurrentImage: () => {
     const state = get();
     const image = state.images.find((i) => i.id === state.selectedImageId);
@@ -847,6 +1615,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -876,6 +1645,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -905,6 +1675,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -918,6 +1689,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             }
       ),
       selectedAnnotationId: visible ? s.selectedAnnotationId : null,
+      selectedAnnotationIds: visible ? s.selectedAnnotationIds : [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
@@ -935,6 +1707,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -944,17 +1717,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         annotations: img.annotations.map((a) => ({ ...a, isVisible: nextVisible })),
       })),
       selectedAnnotationId: nextVisible ? s.selectedAnnotationId : null,
+      selectedAnnotationIds: nextVisible ? s.selectedAnnotationIds : [],
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
   },
 
+  // --- Navigation ---
   moveToNextImage: () => {
     const state = get();
     if (!state.selectedImageId || state.images.length === 0) return;
     const idx = state.images.findIndex((i) => i.id === state.selectedImageId);
     const next = state.images[(idx + 1) % state.images.length];
-    set({ selectedImageId: next.id, selectedAnnotationId: null });
+    set({ selectedImageId: next.id, selectedAnnotationId: null, selectedAnnotationIds: [] });
   },
 
   moveToPrevImage: () => {
@@ -962,19 +1737,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!state.selectedImageId || state.images.length === 0) return;
     const idx = state.images.findIndex((i) => i.id === state.selectedImageId);
     const prev = state.images[(idx - 1 + state.images.length) % state.images.length];
-    set({ selectedImageId: prev.id, selectedAnnotationId: null });
+    set({ selectedImageId: prev.id, selectedAnnotationId: null, selectedAnnotationIds: [] });
   },
 
   moveToFirstImage: () => {
     const state = get();
     if (state.images.length === 0) return;
-    set({ selectedImageId: state.images[0].id, selectedAnnotationId: null });
+    set({ selectedImageId: state.images[0].id, selectedAnnotationId: null, selectedAnnotationIds: [] });
   },
 
   moveToLastImage: () => {
     const state = get();
     if (state.images.length === 0) return;
-    set({ selectedImageId: state.images[state.images.length - 1].id, selectedAnnotationId: null });
+    set({ selectedImageId: state.images[state.images.length - 1].id, selectedAnnotationId: null, selectedAnnotationIds: [] });
   },
 
   moveToNextAnnotation: () => {
@@ -984,7 +1759,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const idx = image.annotations.findIndex((a) => a.id === state.selectedAnnotationId);
     const next = image.annotations[(idx + 1 + image.annotations.length) % image.annotations.length];
-    set({ selectedAnnotationId: next.id });
+    set({ selectedAnnotationId: next.id, selectedAnnotationIds: [next.id] });
   },
 
   moveToPrevAnnotation: () => {
@@ -994,9 +1769,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const idx = image.annotations.findIndex((a) => a.id === state.selectedAnnotationId);
     const prev = image.annotations[(idx - 1 + image.annotations.length) % image.annotations.length];
-    set({ selectedAnnotationId: prev.id });
+    set({ selectedAnnotationId: prev.id, selectedAnnotationIds: [prev.id] });
   },
 
+  // --- Workspace lifecycle ---
   deleteImage: (imageId) => {
     const state = get();
     if (!state.images.some((i) => i.id === imageId)) return;
@@ -1007,22 +1783,117 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
     set((s) => {
       const images = s.images.filter((i) => i.id !== imageId);
       const selectedImageId = s.selectedImageId === imageId ? images[0]?.id ?? null : s.selectedImageId;
+      const nextDisplayIdByClass = { ...s.nextDisplayIdByClass };
+      delete nextDisplayIdByClass[imageId];
       return {
         images,
         selectedImageId,
         selectedAnnotationId: null,
+        selectedAnnotationIds: [],
+        nextDisplayIdByClass,
         undoStack: [...s.undoStack, cloneSnapshot(base)],
         redoStack: [],
       };
     });
   },
 
+  deleteImages: (imageIds) => {
+    const state = get();
+    const ids = Array.from(new Set(imageIds)).filter((id) => state.images.some((img) => img.id === id));
+    if (ids.length === 0) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    const deleted = new Set(ids);
+    set((s) => {
+      const images = s.images.filter((img) => !deleted.has(img.id));
+      const selectedImageId = s.selectedImageId && deleted.has(s.selectedImageId) ? images[0]?.id ?? null : s.selectedImageId;
+      const nextDisplayIdByClass = { ...s.nextDisplayIdByClass };
+      for (const id of deleted) {
+        delete nextDisplayIdByClass[id];
+      }
+      return {
+        images,
+        selectedImageId,
+        selectedAnnotationId: null,
+        selectedAnnotationIds: [],
+        nextDisplayIdByClass,
+        undoStack: [...s.undoStack, cloneSnapshot(base)],
+        redoStack: [],
+      };
+    });
+  },
+
+  closeAllImages: () => {
+    const state = get();
+    if (state.images.length === 0) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: [],
+      selectedImageId: null,
+      selectedAnnotationId: null,
+      selectedAnnotationIds: [],
+      liveDraftBBox: null,
+      nextDisplayIdByClass: {},
+      statusText: 'Closed all images.',
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  clearWorkspace: () => {
+    const state = get();
+    if (state.images.length === 0) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: [],
+      selectedImageId: null,
+      selectedAnnotationId: null,
+      selectedAnnotationIds: [],
+      liveDraftBBox: null,
+      nextDisplayIdByClass: {},
+      statusText: 'Workspace cleared.',
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  // --- Undo/redo ---
   undo: () => {
     const state = get();
     if (state.undoStack.length === 0) return;
@@ -1033,6 +1904,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -1056,6 +1928,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedClassId: state.selectedClassId,
       selectedImageId: state.selectedImageId,
       selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
@@ -1069,6 +1942,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  // --- Export ---
   exportClassesTxt: async () => {
     const state = get();
     const classNames = state.classes.filter((c) => !c.isDefault).map((c) => c.name);
@@ -1096,6 +1970,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     if (format === 'yolo') {
+      // YOLO export: images/ + labels/ + classes.txt + data.yaml.
       const zip = new JSZip();
       const imagesFolder = zip.folder('images');
       const labelsFolder = zip.folder('labels');
@@ -1141,6 +2016,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     if (format === 'coco') {
+      // COCO export: instances JSON + images directory in one dataset zip.
       const zip = new JSZip();
       const imagesFolder = zip.folder('images');
       if (!imagesFolder) return;
@@ -1194,5 +2070,60 @@ export const useAppStore = create<AppState>((set, get) => ({
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(blob, `dataset_coco_${Date.now()}.zip`);
     }
+  },
+
+  exportWorkspaceState: async () => {
+    // Workspace export captures settings, selections, classes, images and annotations.
+    const state = get();
+    const zip = new JSZip();
+    const imagesFolder = zip.folder('images');
+    if (!imagesFolder) return;
+
+    const imageFileNameById: Record<string, string> = {};
+    const usedNames = new Set<string>();
+    for (const image of state.images) {
+      const uniqueName = toUniqueName(image.name, usedNames);
+      imageFileNameById[image.id] = uniqueName;
+      imagesFolder.file(uniqueName, image.file);
+    }
+
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      settings: toViewStateSnapshot(state),
+      selection: {
+        selectedClassId: state.selectedClassId,
+        selectedImageId: state.selectedImageId,
+        selectedAnnotationId: state.selectedAnnotationId,
+        selectedAnnotationIds: state.selectedAnnotationIds,
+      },
+      classes: state.classes.map((c) => ({
+        id: c.id,
+        name: c.name,
+        color: c.color,
+        isVisible: c.isVisible,
+        isDefault: Boolean(c.isDefault),
+      })),
+      images: state.images.map((img) => ({
+        id: img.id,
+        name: img.name,
+        fileName: imageFileNameById[img.id] ?? img.name,
+        width: img.width,
+        height: img.height,
+        annotations: img.annotations.map((ann) => ({
+          id: ann.id,
+          classId: ann.classId,
+          bbox: { ...ann.bbox },
+          isVisible: ann.isVisible,
+          isAnchored: ann.isAnchored,
+          displayId: ann.displayId,
+        })),
+      })),
+      nextDisplayIdByClass: { ...state.nextDisplayIdByClass },
+    };
+
+    zip.file('workspace_state.json', JSON.stringify(payload, null, 2));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, `workspace_state_${Date.now()}.zip`);
   },
 }));

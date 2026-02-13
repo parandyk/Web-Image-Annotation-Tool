@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Group, Layer, Path, Rect, Stage, Text, Image as KonvaImage, Transformer } from 'react-konva';
+import { Group, Layer, Rect, Stage, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { ImageItem, BBox } from '../domain/types';
 import { useAppStore } from '../store/appStore';
+import { PortalMenu } from './common/PortalMenu';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 
+// Clamp any bbox-like input to image coordinates while preserving minimum valid size.
 function clampBBoxToImage(b: BBox, image: ImageItem): BBox {
   const x = Math.max(0, Math.min(image.width, b.x));
   const y = Math.max(0, Math.min(image.height, b.y));
@@ -23,6 +25,7 @@ function clampMovedBBox(b: BBox, image: ImageItem): BBox {
   return { x, y, width, height };
 }
 
+// Convert viewport pointer to image-space coordinates using stage transform inversion.
 function getPointOnImage(stage: Konva.Stage): { x: number; y: number } | null {
   const pointer = stage.getPointerPosition();
   if (!pointer) return null;
@@ -36,6 +39,10 @@ function getPointOnImage(stage: Konva.Stage): { x: number; y: number } | null {
 
 function isPointInsideImage(p: { x: number; y: number }, image: ImageItem): boolean {
   return p.x >= 0 && p.y >= 0 && p.x <= image.width && p.y <= image.height;
+}
+
+function boxesIntersect(a: BBox, b: BBox): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
 function clampAbsoluteDragPos(
@@ -58,6 +65,7 @@ function clampAbsoluteDragPos(
   return toAbs.point(clampedLocal);
 }
 
+// Clamp transformer bounds in image space, then map back to absolute screen space.
 function clampAbsoluteTransformBox(
   box: { x: number; y: number; width: number; height: number; rotation?: number },
   oldBox: { x: number; y: number; width: number; height: number; rotation?: number },
@@ -120,30 +128,42 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const rectRefs = useRef<Record<string, Konva.Rect | null>>({});
   const labelRefs = useRef<Record<string, Konva.Text | null>>({});
+  const anchorRefs = useRef<Record<string, Konva.Text | null>>({});
   const borderRefs = useRef<Record<string, Konva.Rect | null>>({});
+  const selectedRefs = useRef<Record<string, Konva.Rect | null>>({});
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const selectedAnnotationId = useAppStore((s) => s.selectedAnnotationId);
+  const selectedAnnotationIds = useAppStore((s) => s.selectedAnnotationIds);
   const selectedClassId = useAppStore((s) => s.selectedClassId);
   const classes = useAppStore((s) => s.classes);
   const lineThickness = useAppStore((s) => s.lineThickness);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const drawBoxFill = useAppStore((s) => s.drawBoxFill);
   const drawBoxBorder = useAppStore((s) => s.drawBoxBorder);
+  const showCrosshair = useAppStore((s) => s.showCrosshair);
   const showLabels = useAppStore((s) => s.showLabels);
-  const showOnlySelectedThumbs = useAppStore((s) => s.showOnlySelectedThumbs);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteAnnotationWarning = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
 
   const selectAnnotation = useAppStore((s) => s.selectAnnotation);
+  const toggleAnnotationSelection = useAppStore((s) => s.toggleAnnotationSelection);
+  const clearAnnotationSelection = useAppStore((s) => s.clearAnnotationSelection);
+  const selectAllAnnotationsCurrentImage = useAppStore((s) => s.selectAllAnnotationsCurrentImage);
   const addAnnotation = useAppStore((s) => s.addAnnotation);
   const updateAnnotationBBox = useAppStore((s) => s.updateAnnotationBBox);
   const toggleAnnotationVisibility = useAppStore((s) => s.toggleAnnotationVisibility);
   const toggleAnnotationAnchoring = useAppStore((s) => s.toggleAnnotationAnchoring);
+  const toggleAnnotationsVisibility = useAppStore((s) => s.toggleAnnotationsVisibility);
+  const toggleAnnotationsAnchoring = useAppStore((s) => s.toggleAnnotationsAnchoring);
   const deleteAnnotation = useAppStore((s) => s.deleteAnnotation);
+  const deleteSelectedAnnotations = useAppStore((s) => s.deleteSelectedAnnotations);
+  const setAnnotationSelection = useAppStore((s) => s.setAnnotationSelection);
+  const setAnnotationsClass = useAppStore((s) => s.setAnnotationsClass);
+  const setLiveDraftBBox = useAppStore((s) => s.setLiveDraftBBox);
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
   const [viewScale, setViewScale] = useState(1);
@@ -153,16 +173,34 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const [draftBBox, setDraftBBox] = useState<BBox | null>(null);
   const [dragAdding, setDragAdding] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; annId: string } | null>(null);
-  const [confirmDeleteAnnId, setConfirmDeleteAnnId] = useState<string | null>(null);
+  const [confirmDeleteAnnIds, setConfirmDeleteAnnIds] = useState<string[] | null>(null);
+  const [swapClassAnnIds, setSwapClassAnnIds] = useState<string[] | null>(null);
+  const [swapClassId, setSwapClassId] = useState<string>('');
+  const [marqueeStart, setMarqueeStart] = useState<{ x: number; y: number } | null>(null);
+  const [marqueeBBox, setMarqueeBBox] = useState<BBox | null>(null);
+  const [marqueeSeedSelection, setMarqueeSeedSelection] = useState<string[]>([]);
   const [annotationInteraction, setAnnotationInteraction] = useState(false);
   const [canvasDragMode, setCanvasDragMode] = useState<'annotate' | 'pan'>('annotate');
+  const [crosshairImgPos, setCrosshairImgPos] = useState<{ x: number; y: number }>({ x: image.width / 2, y: image.height / 2 });
+  const [pointerInsideImage, setPointerInsideImage] = useState(false);
 
+  // Unified cancel path for both click-click and drag draft creation flows.
   const abortDraft = (): void => {
     setDraftStart(null);
     setDraftBBox(null);
     setDragAdding(false);
+    setLiveDraftBBox(null);
   };
 
+  const clampPointToImage = (p: { x: number; y: number }): { x: number; y: number } => ({
+    x: Math.max(0, Math.min(image.width, p.x)),
+    y: Math.max(0, Math.min(image.height, p.y)),
+  });
+
+  const isMultiSelectModifierActive = (evt: { ctrlKey?: boolean; metaKey?: boolean; getModifierState?: (keyArg: string) => boolean }): boolean =>
+    Boolean(evt.ctrlKey || evt.metaKey || evt.getModifierState?.('Control'));
+
+  // Load the browser image element once per selected source.
   useEffect(() => {
     const img = new Image();
     img.src = image.src;
@@ -185,6 +223,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   }, []);
 
   useEffect(() => {
+    // Refit and reset interaction state whenever image or viewport size changes.
     const fitScale = Math.min(stageSize.width / image.width, stageSize.height / image.height);
     const clampedFitScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScale > 0 ? fitScale : 1));
     const x = (stageSize.width - image.width * clampedFitScale) / 2;
@@ -194,8 +233,32 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setViewPos({ x, y });
     abortDraft();
     setMenu(null);
+    setSwapClassAnnIds(null);
     setCanvasDragMode('annotate');
+    setCrosshairImgPos({ x: image.width / 2, y: image.height / 2 });
+    setMarqueeStart(null);
+    setMarqueeBBox(null);
+    setMarqueeSeedSelection([]);
   }, [image.id, image.width, image.height, stageSize.height, stageSize.width]);
+
+  useEffect(() => {
+    // Crosshair tracks pointer globally but is clamped to image bounds.
+    const onPointerMove = (e: PointerEvent): void => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const imgX = (px - viewPos.x) / viewScale;
+      const imgY = (py - viewPos.y) / viewScale;
+      const insideContainer = px >= 0 && py >= 0 && px <= rect.width && py <= rect.height;
+      const insideImage =
+        insideContainer && imgX >= 0 && imgY >= 0 && imgX <= image.width && imgY <= image.height;
+      setPointerInsideImage(insideImage);
+      setCrosshairImgPos(clampPointToImage({ x: imgX, y: imgY }));
+    };
+    window.addEventListener('pointermove', onPointerMove, true);
+    return () => window.removeEventListener('pointermove', onPointerMove, true);
+  }, [image.height, image.width, viewPos.x, viewPos.y, viewScale]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -211,25 +274,75 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
 
   useEffect(() => {
     if (!menu) return;
+    const closeDistancePx = 240;
     const onPointerDown = (e: PointerEvent): void => {
       const target = e.target as Node;
       if (menuRef.current?.contains(target)) return;
       setMenu(null);
     };
+    const onPointerMove = (e: PointerEvent): void => {
+      const menuEl = menuRef.current;
+      if (!menuEl) return;
+      const rect = menuEl.getBoundingClientRect();
+      const px = e.clientX;
+      const py = e.clientY;
+      const inMenu =
+        px >= rect.left - 12 &&
+        px <= rect.right + 12 &&
+        py >= rect.top - 12 &&
+        py <= rect.bottom + 12;
+      if (inMenu) return;
+      const nearestX = Math.max(rect.left, Math.min(px, rect.right));
+      const nearestY = Math.max(rect.top, Math.min(py, rect.bottom));
+      const distance = Math.hypot(px - nearestX, py - nearestY);
+      // Keep context menu open only while pointer remains nearby.
+      if (distance > closeDistancePx) {
+        setMenu(null);
+      }
+    };
     window.addEventListener('pointerdown', onPointerDown, true);
-    return () => window.removeEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointermove', onPointerMove, true);
+    };
   }, [menu]);
 
   useEffect(() => {
+    // Escape aborts all transient interactions; Ctrl/Cmd+A selects all annotations in image.
     const onKey = (e: KeyboardEvent): void => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active.closest('input,textarea,select,[contenteditable="true"]')) return;
+
       if (e.key === 'Escape') {
-        abortDraft();
         setMenu(null);
+        setSwapClassAnnIds(null);
+        setMarqueeStart(null);
+        setMarqueeBBox(null);
+        setMarqueeSeedSelection([]);
+        abortDraft();
+        clearAnnotationSelection();
+        return;
+      }
+
+      const isMac = navigator.platform.toLowerCase().includes('mac');
+      const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+      if (ctrlOrCmd && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        selectAllAnnotationsCurrentImage();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [clearAnnotationSelection, selectAllAnnotationsCurrentImage]);
+
+  useEffect(() => {
+    setLiveDraftBBox(draftBBox);
+  }, [draftBBox, setLiveDraftBBox]);
+
+  useEffect(() => {
+    return () => setLiveDraftBBox(null);
+  }, [setLiveDraftBBox]);
 
   const getPointFromPointerEvent = (e: PointerEvent): { x: number; y: number } | null => {
     const stage = stageRef.current;
@@ -250,12 +363,71 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     [classById, image.annotations]
   );
 
+  const selectedIdsForImage = useMemo(() => {
+    const available = new Set(image.annotations.map((a) => a.id));
+    return selectedAnnotationIds.filter((id) => available.has(id));
+  }, [image.annotations, selectedAnnotationIds]);
+
+  const finalizeMarqueeSelection = (endPos: { x: number; y: number } | null): void => {
+    if (!marqueeStart) return;
+
+    const end = clampPointToImage(endPos ?? marqueeStart);
+    const selectionBox: BBox = {
+      x: Math.min(marqueeStart.x, end.x),
+      y: Math.min(marqueeStart.y, end.y),
+      width: Math.abs(end.x - marqueeStart.x),
+      height: Math.abs(end.y - marqueeStart.y),
+    };
+
+    const hitIds = visibleAnnotations
+      .filter((ann) => boxesIntersect(selectionBox, ann.bbox))
+      .map((ann) => ann.id);
+    const nextSelection = Array.from(new Set([...marqueeSeedSelection, ...hitIds]));
+    const latestId = hitIds[hitIds.length - 1] ?? nextSelection[nextSelection.length - 1] ?? null;
+    setAnnotationSelection(nextSelection, latestId);
+
+    setMarqueeStart(null);
+    setMarqueeBBox(null);
+    setMarqueeSeedSelection([]);
+  };
+
   useEffect(() => {
+    if (!marqueeStart) return;
+    const onMove = (e: PointerEvent): void => {
+      const pos = getPointFromPointerEvent(e);
+      if (!pos) return;
+      const clamped = clampPointToImage(pos);
+      setMarqueeBBox({
+        x: Math.min(marqueeStart.x, clamped.x),
+        y: Math.min(marqueeStart.y, clamped.y),
+        width: Math.abs(clamped.x - marqueeStart.x),
+        height: Math.abs(clamped.y - marqueeStart.y),
+      });
+    };
+    const onUp = (e: PointerEvent): void => {
+      finalizeMarqueeSelection(getPointFromPointerEvent(e));
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    return () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+    };
+  }, [marqueeStart, image.height, image.width, viewPos.x, viewPos.y, viewScale, visibleAnnotations, marqueeSeedSelection]);
+
+  useEffect(() => {
+    // Transformer is enabled only for single, editable, unanchored selection.
     const tr = transformerRef.current;
     if (!tr) return;
 
-    const selected = selectedAnnotationId ? rectRefs.current[selectedAnnotationId] : null;
-    const ann = image.annotations.find((a) => a.id === selectedAnnotationId);
+    if (selectedIdsForImage.length !== 1) {
+      tr.nodes([]);
+      tr.getLayer()?.batchDraw();
+      return;
+    }
+
+    const selected = rectRefs.current[selectedIdsForImage[0]];
+    const ann = image.annotations.find((a) => a.id === selectedIdsForImage[0]);
     if (!selected || !ann || ann.isAnchored || interactionMode !== 'edit' || canvasDragMode !== 'annotate') {
       tr.nodes([]);
       tr.getLayer()?.batchDraw();
@@ -264,7 +436,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
 
     tr.nodes([selected]);
     tr.getLayer()?.batchDraw();
-  }, [canvasDragMode, image.annotations, interactionMode, selectedAnnotationId, showOnlySelectedThumbs]);
+  }, [canvasDragMode, image.annotations, interactionMode, selectedIdsForImage]);
 
   const onWheel = (e: Konva.KonvaEventObject<WheelEvent>): void => {
     if (!e.evt.ctrlKey && !e.evt.metaKey) return;
@@ -321,7 +493,21 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     if (!drawableSurface) return;
 
     setMenu(null);
-    selectAnnotation(null);
+
+    if (interactionMode === 'edit' && canvasDragMode === 'annotate' && clickedCanvasSurface) {
+      // Edit mode + empty-space drag starts marquee selection.
+      const pos = getPointOnImage(stage);
+      if (!pos || !isPointInsideImage(pos, image)) return;
+      const clamped = clampPointToImage(pos);
+      const additive = isMultiSelectModifierActive(e.evt);
+      setMarqueeStart(clamped);
+      setMarqueeBBox({ x: clamped.x, y: clamped.y, width: 0, height: 0 });
+      setMarqueeSeedSelection(additive ? selectedIdsForImage : []);
+      if (!additive) {
+        clearAnnotationSelection();
+      }
+      return;
+    }
 
     if (canvasDragMode === 'pan') return;
 
@@ -334,6 +520,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     }
 
     if (addingMode === 'click') {
+      // Click-click mode: first click sets anchor, second click finalizes/clamps.
       if (!draftStart) {
         setDraftStart(pos);
         setDraftBBox({ x: pos.x, y: pos.y, width: 1, height: 1 });
@@ -431,6 +618,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   };
 
   useEffect(() => {
+    // Global listeners keep drag-draw responsive even if pointer leaves stage element.
     if (!(interactionMode === 'add' && addingMode === 'drag' && dragAdding)) return;
     const onMove = (e: PointerEvent): void => {
       const pos = getPointFromPointerEvent(e);
@@ -477,6 +665,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   }, [addingMode, dragAdding, draftStart, dragDeadzonePx, image.height, image.width, interactionMode]);
 
   useEffect(() => {
+    // In click-click mode, allow finishing from outside image while keeping bbox clamped.
     if (!(interactionMode === 'add' && addingMode === 'click' && draftStart)) return;
     const onMove = (e: PointerEvent): void => {
       const pos = getPointFromPointerEvent(e);
@@ -537,6 +726,24 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setViewPos({ x, y });
   };
 
+  const crosshairStageX = crosshairImgPos.x * viewScale + viewPos.x;
+  const crosshairStageY = crosshairImgPos.y * viewScale + viewPos.y;
+
+  const crossLabelText = `${crosshairImgPos.x.toFixed(1)}, ${crosshairImgPos.y.toFixed(1)}`;
+  const crossLabelW = Math.max(72, crossLabelText.length * 7.1 + 12);
+  const crossLabelH = 22;
+  let crossLabelLeft = crosshairStageX + 10;
+  let crossLabelTop = crosshairStageY + 10;
+
+  if (crossLabelLeft + crossLabelW > stageSize.width - 6) {
+    crossLabelLeft = crosshairStageX - crossLabelW - 10;
+  }
+  if (crossLabelTop + crossLabelH > stageSize.height - 6) {
+    crossLabelTop = crosshairStageY - crossLabelH - 10;
+  }
+  if (crossLabelLeft < 6) crossLabelLeft = 6;
+  if (crossLabelTop < 6) crossLabelTop = 6;
+
   return (
     <div className="canvas-shell">
       <div className="canvas-toolbar">
@@ -554,7 +761,20 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
           <button onClick={resetView}>Reset View</button>
         </div>
       </div>
-      <div ref={containerRef} className="canvas-container">
+      <div
+        ref={containerRef}
+        className={`canvas-container ${showCrosshair && pointerInsideImage ? 'canvas-crosshair-mode' : ''}`}
+      >
+        {showCrosshair && (
+          // Crosshair overlay is UI-only; annotation geometry remains image-space.
+          <div className="workspace-crosshair-overlay" aria-hidden="true">
+            <div className="crosshair-line-h" style={{ top: `${crosshairStageY}px` }} />
+            <div className="crosshair-line-v" style={{ left: `${crosshairStageX}px` }} />
+            <div className="crosshair-coords" style={{ left: `${crossLabelLeft}px`, top: `${crossLabelTop}px` }}>
+              {crossLabelText}
+            </div>
+          </div>
+        )}
         <Stage
           width={stageSize.width}
           height={stageSize.height}
@@ -582,20 +802,24 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
             {visibleAnnotations.map((ann) => {
               const cls = classById.get(ann.classId);
               if (!cls) return null;
+              const isSelected = selectedIdsForImage.includes(ann.id);
               const visualStroke = drawBoxBorder ? lineThickness / viewScale : 0;
               const inset = visualStroke / 2;
               const visualX = ann.bbox.x + inset;
               const visualY = ann.bbox.y + inset;
               const visualW = Math.max(1, ann.bbox.width - inset * 2);
               const visualH = Math.max(1, ann.bbox.height - inset * 2);
-              const badgeSize = 14 / viewScale;
-              const badgePad = 2 / viewScale;
-              const badgeX = ann.bbox.x + Math.max(0, ann.bbox.width - badgeSize - badgePad);
-              const badgeY = ann.bbox.y + badgePad;
+              const selectedStroke = 2 / viewScale;
+              const selectedInset = selectedStroke / 2;
+              const anchorPad = (drawBoxBorder ? lineThickness / viewScale : 0) + 2 / viewScale;
+              const anchorFontSize = 12 / viewScale;
+              const anchorX = ann.bbox.x + anchorPad;
+              const anchorY = Math.max(0, ann.bbox.y + ann.bbox.height - anchorPad - anchorFontSize);
+              const anchorWidth = Math.max(1, ann.bbox.width - anchorPad * 2);
 
-              return [
+              return (
+                <Group key={`ann_${ann.id}`}>
                   <Rect
-                    key={ann.id}
                     name="annotation"
                     ref={(node) => {
                       rectRefs.current[ann.id] = node;
@@ -608,7 +832,13 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                     strokeWidth={0}
                     fill={drawBoxFill ? cls.color : 'rgba(0,0,0,0.001)'}
                     opacity={drawBoxFill ? bboxOpacity : 1}
-                    draggable={interactionMode === 'edit' && !ann.isAnchored && canvasDragMode === 'annotate'}
+                    draggable={
+                      interactionMode === 'edit' &&
+                      !ann.isAnchored &&
+                      canvasDragMode === 'annotate' &&
+                      selectedIdsForImage.length === 1 &&
+                      selectedIdsForImage[0] === ann.id
+                    }
                     dragBoundFunc={(pos) =>
                       clampAbsoluteDragPos(
                         pos,
@@ -622,6 +852,10 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       if (interactionMode === 'add') return;
                       e.cancelBubble = true;
                       setMenu(null);
+                      if (isMultiSelectModifierActive(e.evt)) {
+                        toggleAnnotationSelection(ann.id);
+                        return;
+                      }
                       const next = pickNextOverlappingAnnotation();
                       selectAnnotation(next ?? ann.id);
                     }}
@@ -659,6 +893,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       stageRef.current?.draggable(false);
                     }}
                     onDragMove={(e) => {
+                    // Update visual companions live so borders/labels stay in sync mid-drag.
                     const node = e.target;
                     const live = clampMovedBBox(
                         {
@@ -670,7 +905,9 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                         image
                     );
                     const labelNode = labelRefs.current[ann.id];
+                    const anchorNode = anchorRefs.current[ann.id];
                     const borderNode = borderRefs.current[ann.id];
+                    const selectedNode = selectedRefs.current[ann.id];
                     if (labelNode) {
                       const labelYOffset = drawBoxBorder ? lineThickness / viewScale + 2 / viewScale : 2 / viewScale;
                       labelNode.x(live.x + (drawBoxBorder ? lineThickness / viewScale + 5 / viewScale : 5 / viewScale));
@@ -686,6 +923,25 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       borderNode.height(Math.max(1, live.height - liveInset * 2));
                       borderNode.strokeWidth(liveStroke);
                       borderNode.getLayer()?.batchDraw();
+                    }
+                    if (selectedNode) {
+                      const liveSelectedStroke = 2 / viewScale;
+                      const liveSelectedInset = liveSelectedStroke / 2;
+                      selectedNode.x(live.x + liveSelectedInset);
+                      selectedNode.y(live.y + liveSelectedInset);
+                      selectedNode.width(Math.max(1, live.width - liveSelectedInset * 2));
+                      selectedNode.height(Math.max(1, live.height - liveSelectedInset * 2));
+                      selectedNode.strokeWidth(liveSelectedStroke);
+                      selectedNode.getLayer()?.batchDraw();
+                    }
+                    if (anchorNode) {
+                      const liveAnchorPad = (drawBoxBorder ? lineThickness / viewScale : 0) + 2 / viewScale;
+                      const liveAnchorFontSize = 12 / viewScale;
+                      anchorNode.x(live.x + liveAnchorPad);
+                      anchorNode.y(Math.max(0, live.y + live.height - liveAnchorPad - liveAnchorFontSize));
+                      anchorNode.width(Math.max(1, live.width - liveAnchorPad * 2));
+                      anchorNode.fontSize(liveAnchorFontSize);
+                      anchorNode.getLayer()?.batchDraw();
                     }
                   }}
                     onTransformEnd={(e) => {
@@ -715,6 +971,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       stageRef.current?.draggable(false);
                     }}
                     onTransform={(e) => {
+                    // Mirror transform preview onto border/selection/anchor overlays.
                       const node = e.target;
                     const live = clampBBoxToImage(
                         {
@@ -726,7 +983,9 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                         image
                     );
                     const labelNode = labelRefs.current[ann.id];
+                    const anchorNode = anchorRefs.current[ann.id];
                     const borderNode = borderRefs.current[ann.id];
+                    const selectedNode = selectedRefs.current[ann.id];
                     if (labelNode) {
                       const labelYOffset = drawBoxBorder ? lineThickness / viewScale + 2 / viewScale : 2 / viewScale;
                       labelNode.x(live.x + (drawBoxBorder ? lineThickness / viewScale + 5 / viewScale : 5 / viewScale));
@@ -743,17 +1002,37 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       borderNode.strokeWidth(liveStroke);
                       borderNode.getLayer()?.batchDraw();
                     }
+                    if (selectedNode) {
+                      const liveSelectedStroke = 2 / viewScale;
+                      const liveSelectedInset = liveSelectedStroke / 2;
+                      selectedNode.x(live.x + liveSelectedInset);
+                      selectedNode.y(live.y + liveSelectedInset);
+                      selectedNode.width(Math.max(1, live.width - liveSelectedInset * 2));
+                      selectedNode.height(Math.max(1, live.height - liveSelectedInset * 2));
+                      selectedNode.strokeWidth(liveSelectedStroke);
+                      selectedNode.getLayer()?.batchDraw();
+                    }
+                    if (anchorNode) {
+                      const liveAnchorPad = (drawBoxBorder ? lineThickness / viewScale : 0) + 2 / viewScale;
+                      const liveAnchorFontSize = 12 / viewScale;
+                      anchorNode.x(live.x + liveAnchorPad);
+                      anchorNode.y(Math.max(0, live.y + live.height - liveAnchorPad - liveAnchorFontSize));
+                      anchorNode.width(Math.max(1, live.width - liveAnchorPad * 2));
+                      anchorNode.fontSize(liveAnchorFontSize);
+                      anchorNode.getLayer()?.batchDraw();
+                    }
                   }}
                     onContextMenu={(e) => {
                       e.evt.preventDefault();
                       e.cancelBubble = true;
-                      selectAnnotation(ann.id);
+                      if (!selectedIdsForImage.includes(ann.id)) {
+                        selectAnnotation(ann.id);
+                      }
                       setMenu({ x: e.evt.clientX, y: e.evt.clientY, annId: ann.id });
                     }}
-                  />,
-                  drawBoxBorder ? (
+                  />
+                  {drawBoxBorder ? (
                     <Rect
-                      key={`${ann.id}_border`}
                       ref={(node) => {
                         borderRefs.current[ann.id] = node;
                       }}
@@ -767,23 +1046,40 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       fill="transparent"
                       listening={false}
                     />
-                  ) : null,
-                  ann.isAnchored ? (
-                    <Group key={`${ann.id}_anchor_badge`} x={badgeX} y={badgeY} listening={false}>
-                      <Rect width={badgeSize} height={badgeSize} cornerRadius={2 / viewScale} fill="rgba(0,0,0,0.72)" />
-                      <Path
-                        data="M4 6V5.4A2.6 2.6 0 0 1 9.2 5.4V6 M3.4 6H9.8V10.6H3.4Z"
-                        x={-1 / viewScale}
-                        y={-1 / viewScale}
-                        scaleX={badgeSize / 12}
-                        scaleY={badgeSize / 12}
-                        stroke="#F8FAFC"
-                        strokeWidth={1.2 / viewScale}
-                        fill="transparent"
-                      />
-                    </Group>
-                  ) : null,
-              ];
+                  ) : null}
+                  {isSelected ? (
+                    <Rect
+                      ref={(node) => {
+                        selectedRefs.current[ann.id] = node;
+                      }}
+                      x={ann.bbox.x + selectedInset}
+                      y={ann.bbox.y + selectedInset}
+                      width={Math.max(1, ann.bbox.width - selectedInset * 2)}
+                      height={Math.max(1, ann.bbox.height - selectedInset * 2)}
+                      stroke="#38bdf8"
+                      strokeWidth={selectedStroke}
+                      fill="transparent"
+                      listening={false}
+                    />
+                  ) : null}
+                  {ann.isAnchored ? (
+                    <Text
+                      ref={(node) => {
+                        anchorRefs.current[ann.id] = node;
+                      }}
+                      x={anchorX}
+                      y={anchorY}
+                      width={anchorWidth}
+                      align="right"
+                      text="[A]"
+                      fill={cls.color}
+                      fontStyle="bold"
+                      fontSize={anchorFontSize}
+                      listening={false}
+                    />
+                  ) : null}
+                </Group>
+              );
             })}
 
             {showLabels &&
@@ -802,7 +1098,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       0,
                       ann.bbox.y + (drawBoxBorder ? lineThickness / viewScale + 2 / viewScale : 2 / viewScale)
                     )}
-                    text={`#${ann.displayId} ${cls.name}${ann.isAnchored ? ' [A]' : ''}`}
+                    text={`#${ann.displayId} ${cls.name}`}
                     fill={cls.color}
                     fontStyle="bold"
                     fontSize={14 / viewScale}
@@ -819,6 +1115,19 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                 height={draftBBox.height}
                 stroke={classById.get(selectedClassId)?.color ?? '#38bdf8'}
                 strokeWidth={2 / viewScale}
+                dash={[8 / viewScale, 6 / viewScale]}
+                listening={false}
+              />
+            )}
+            {marqueeBBox && interactionMode === 'edit' && canvasDragMode === 'annotate' && (
+              <Rect
+                x={marqueeBBox.x}
+                y={marqueeBBox.y}
+                width={marqueeBBox.width}
+                height={marqueeBBox.height}
+                stroke="#38bdf8"
+                strokeWidth={2 / viewScale}
+                fill="rgba(56, 189, 248, 0.12)"
                 dash={[8 / viewScale, 6 / viewScale]}
                 listening={false}
               />
@@ -851,31 +1160,116 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
         </Stage>
       </div>
       {menu && (
-        <div ref={menuRef} className="annotation-menu" style={{ left: menu.x, top: menu.y }}>
-          <button onClick={() => toggleAnnotationVisibility(menu.annId)}>Toggle visibility</button>
-          <button onClick={() => toggleAnnotationAnchoring(menu.annId)}>Toggle anchoring</button>
+        // Right-click menu supports single or multi-selection operations.
+        <PortalMenu x={menu.x} y={menu.y} menuRef={menuRef}>
           <button
             onClick={() => {
-              if (suppressDeleteAnnotationWarning) {
-                deleteAnnotation(menu.annId);
+              if (selectedIdsForImage.length > 1 && selectedIdsForImage.includes(menu.annId)) {
+                toggleAnnotationsVisibility(selectedIdsForImage);
               } else {
-                setConfirmDeleteAnnId(menu.annId);
+                toggleAnnotationVisibility(menu.annId);
+              }
+              setMenu(null);
+            }}
+          >
+            Toggle visibility
+          </button>
+          <button
+            onClick={() => {
+              if (selectedIdsForImage.length > 1 && selectedIdsForImage.includes(menu.annId)) {
+                toggleAnnotationsAnchoring(selectedIdsForImage);
+              } else {
+                toggleAnnotationAnchoring(menu.annId);
+              }
+              setMenu(null);
+            }}
+          >
+            Toggle anchoring
+          </button>
+          <button
+            onClick={() => {
+              const targetIds =
+                selectedIdsForImage.length > 1 && selectedIdsForImage.includes(menu.annId)
+                  ? [...selectedIdsForImage]
+                  : [menu.annId];
+              if (targetIds.length === 0) {
+                setMenu(null);
+                return;
+              }
+              const first = image.annotations.find((a) => a.id === targetIds[0]);
+              setSwapClassId(first?.classId ?? classes[0]?.id ?? '');
+              setSwapClassAnnIds(targetIds);
+              setMenu(null);
+            }}
+          >
+            Swap class
+          </button>
+          <button
+            onClick={() => {
+              const deletingMultiple = selectedIdsForImage.length > 1 && selectedIdsForImage.includes(menu.annId);
+              if (suppressDeleteAnnotationWarning) {
+                if (deletingMultiple) deleteSelectedAnnotations();
+                else deleteAnnotation(menu.annId);
+              } else {
+                setConfirmDeleteAnnIds(deletingMultiple ? [...selectedIdsForImage] : [menu.annId]);
               }
               setMenu(null);
             }}
           >
             Delete
           </button>
-          <button onClick={() => setMenu(null)}>Close</button>
+        </PortalMenu>
+      )}
+      {swapClassAnnIds && (
+        <div className="modal-backdrop" onClick={() => setSwapClassAnnIds(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-stack">
+              <section>
+                <h4>Swap class</h4>
+                <p>
+                  {swapClassAnnIds.length > 1
+                    ? `Change class for ${swapClassAnnIds.length} selected annotations.`
+                    : 'Change class for the selected annotation.'}
+                </p>
+                <label>
+                  Class
+                  <select value={swapClassId} onChange={(e) => setSwapClassId(e.target.value)}>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="row dialog-actions">
+                  <button
+                    onClick={() => {
+                      if (swapClassId) {
+                        setAnnotationsClass(swapClassAnnIds, swapClassId);
+                      }
+                      setSwapClassAnnIds(null);
+                    }}
+                  >
+                    Apply
+                  </button>
+                  <button onClick={() => setSwapClassAnnIds(null)}>Cancel</button>
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
       )}
-      {confirmDeleteAnnId && (
-        <div className="modal-backdrop" onClick={() => setConfirmDeleteAnnId(null)}>
+      {confirmDeleteAnnIds && (
+        <div className="modal-backdrop" onClick={() => setConfirmDeleteAnnIds(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="panel-stack">
               <section>
                 <h4>Delete annotation</h4>
-                <p>This will permanently remove the selected annotation.</p>
+                <p>
+                  {confirmDeleteAnnIds.length > 1
+                    ? `This will permanently remove ${confirmDeleteAnnIds.length} selected annotations.`
+                    : 'This will permanently remove the selected annotation.'}
+                </p>
                 <label className="inline-check">
                   <input
                     type="checkbox"
@@ -887,13 +1281,14 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                 <div className="row dialog-actions">
                   <button
                     onClick={() => {
-                      deleteAnnotation(confirmDeleteAnnId);
-                      setConfirmDeleteAnnId(null);
+                      if (confirmDeleteAnnIds.length > 1) deleteSelectedAnnotations();
+                      else deleteAnnotation(confirmDeleteAnnIds[0]);
+                      setConfirmDeleteAnnIds(null);
                     }}
                   >
                     Delete
                   </button>
-                  <button onClick={() => setConfirmDeleteAnnId(null)}>Cancel</button>
+                  <button onClick={() => setConfirmDeleteAnnIds(null)}>Cancel</button>
                 </div>
               </section>
             </div>
