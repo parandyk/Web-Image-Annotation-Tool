@@ -22,6 +22,9 @@ Coming soon!
 
 ## Showcase
 
+The tool demo is available at:
+https://parandyk.github.io/Web-Image-Annotation-Tool/
+
 Coming soon!
 
 ## Disclaimer
