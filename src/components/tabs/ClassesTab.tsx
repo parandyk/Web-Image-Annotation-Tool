@@ -144,6 +144,12 @@ export function ClassesTab(): JSX.Element {
   }, [allClasses]);
 
   useEffect(() => {
+    if (!selectedClassId) return;
+    // Keep list highlight aligned with active class changes triggered outside this tab (e.g. hotkeys).
+    setSelectedClassIds((prev) => (prev.includes(selectedClassId) ? prev : [selectedClassId]));
+  }, [selectedClassId]);
+
+  useEffect(() => {
     if (!classMenu) return;
     const closeDistancePx = 240;
     const onPointerDown = (e: PointerEvent): void => {
