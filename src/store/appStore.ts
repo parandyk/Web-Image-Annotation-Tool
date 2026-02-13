@@ -278,6 +278,45 @@ async function getImageDimensions(file: File): Promise<{ width: number; height: 
   });
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function getImageDimensionsWithRetry(file: File, attempts = 3): Promise<{ width: number; height: number }> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await getImageDimensions(file);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await wait(120 * attempt);
+      }
+    }
+  }
+  throw lastError ?? new Error('Image decode failed');
+}
+
+function revokeObjectUrl(url: string): void {
+  if (url.startsWith('blob:')) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function revokeImageSources(images: ImageItem[]): void {
+  for (const image of images) {
+    revokeObjectUrl(image.src);
+  }
+}
+
+function withFreshObjectUrls(images: ImageItem[]): ImageItem[] {
+  return images.map((img) => ({
+    ...img,
+    src: URL.createObjectURL(img.file),
+    annotations: img.annotations.map((ann) => ({ ...ann, bbox: { ...ann.bbox } })),
+  }));
+}
+
 function parseYoloNamesFromYaml(content: string): string[] {
   // Accept both "names: [..]" and indexed "0: name" YAML styles.
   const mapped: Array<[number, string]> = [];
@@ -461,27 +500,39 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
 
     const takenNames = new Set(current.images.map((i) => i.name));
-    const newImages = await Promise.all(
-      files.map(async (file) => {
-        const src = URL.createObjectURL(file);
-        const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-          const image = new Image();
-          image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-          image.onerror = reject;
-          image.src = src;
-        });
-
-        return {
+    const newImages: ImageItem[] = [];
+    const failedNames: string[] = [];
+    for (const file of files) {
+      try {
+        const dims = await getImageDimensionsWithRetry(file, 3);
+        newImages.push({
           id: uid('img'),
           name: toUniqueName(file.name, takenNames),
           file,
-          src,
+          src: URL.createObjectURL(file),
           width: dims.width,
           height: dims.height,
           annotations: [],
-        } as ImageItem;
-      })
-    );
+        });
+      } catch {
+        failedNames.push(file.name);
+      }
+    }
+
+    if (newImages.length === 0) {
+      set({
+        statusText:
+          failedNames.length === 1
+            ? `Couldn't open "${failedNames[0]}".`
+            : `Couldn't open ${failedNames.length} selected images.`,
+      });
+      return;
+    }
+
+    const partialFailureStatus =
+      failedNames.length > 0
+        ? `Opened ${newImages.length}/${files.length} images. ${failedNames.length} failed to decode.`
+        : null;
 
     set((state) => ({
       images: [...state.images, ...newImages],
@@ -494,6 +545,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
       undoStack: [...state.undoStack, cloneSnapshot(base)],
       redoStack: [],
+      ...(partialFailureStatus ? { statusText: partialFailureStatus } : {}),
     }));
   },
 
@@ -1776,6 +1828,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteImage: (imageId) => {
     const state = get();
     if (!state.images.some((i) => i.id === imageId)) return;
+    const removed = state.images.find((i) => i.id === imageId);
+    if (removed) revokeObjectUrl(removed.src);
 
     const base: Snapshot = {
       classes: state.classes,
@@ -1808,6 +1862,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const ids = Array.from(new Set(imageIds)).filter((id) => state.images.some((img) => img.id === id));
     if (ids.length === 0) return;
+    const deleted = new Set(ids);
+    revokeImageSources(state.images.filter((img) => deleted.has(img.id)));
 
     const base: Snapshot = {
       classes: state.classes,
@@ -1819,7 +1875,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       nextDisplayIdByClass: state.nextDisplayIdByClass,
     };
 
-    const deleted = new Set(ids);
     set((s) => {
       const images = s.images.filter((img) => !deleted.has(img.id));
       const selectedImageId = s.selectedImageId && deleted.has(s.selectedImageId) ? images[0]?.id ?? null : s.selectedImageId;
@@ -1842,6 +1897,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeAllImages: () => {
     const state = get();
     if (state.images.length === 0) return;
+    revokeImageSources(state.images);
 
     const base: Snapshot = {
       classes: state.classes,
@@ -1869,6 +1925,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearWorkspace: () => {
     const state = get();
     if (state.images.length === 0) return;
+    revokeImageSources(state.images);
 
     const base: Snapshot = {
       classes: state.classes,
@@ -1910,9 +1967,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const previous = state.undoStack[state.undoStack.length - 1];
     const trimmedUndo = state.undoStack.slice(0, -1);
+    const restored = cloneSnapshot(previous);
+    revokeImageSources(state.images);
+    const hydratedImages = withFreshObjectUrls(restored.images);
 
     set({
-      ...cloneSnapshot(previous),
+      ...restored,
+      images: hydratedImages,
       undoStack: trimmedUndo,
       redoStack: [...state.redoStack, cloneSnapshot(current)],
     });
@@ -1934,9 +1995,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const next = state.redoStack[state.redoStack.length - 1];
     const trimmedRedo = state.redoStack.slice(0, -1);
+    const restored = cloneSnapshot(next);
+    revokeImageSources(state.images);
+    const hydratedImages = withFreshObjectUrls(restored.images);
 
     set({
-      ...cloneSnapshot(next),
+      ...restored,
+      images: hydratedImages,
       redoStack: trimmedRedo,
       undoStack: [...state.undoStack, cloneSnapshot(current)],
     });
