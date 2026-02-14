@@ -64,6 +64,7 @@ export function ClassesTab(): JSX.Element {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [classMenu, setClassMenu] = useState<{ classId: string; x: number; y: number } | null>(null);
+  const hotkeyScopeRef = useRef<HTMLDivElement | null>(null);
   const classMenuRef = useRef<HTMLDivElement | null>(null);
   const [bulkDeleteClassIds, setBulkDeleteClassIds] = useState<string[] | null>(null);
   const [bulkSwapClassIds, setBulkSwapClassIds] = useState<string[] | null>(null);
@@ -286,6 +287,33 @@ export function ClassesTab(): JSX.Element {
     setBulkRemoveClassIds(unique);
   };
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
+      if (e.repeat) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (captureHotkeyClassId) return;
+      if (document.querySelector('.modal-backdrop')) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest('input,textarea,select,[contenteditable="true"],.class-hotkey-btn.active')) return;
+
+      const scope = hotkeyScopeRef.current;
+      if (!scope || !active || !scope.contains(active)) return;
+
+      const ids = selectedClassIds.length > 0 ? selectedClassIds : selectedClassId ? [selectedClassId] : [];
+      if (ids.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setClassMenu(null);
+      openBulkDeleteDialog(ids);
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [captureHotkeyClassId, openBulkDeleteDialog, selectedClassId, selectedClassIds]);
+
   const beginDialog = (next: DialogState): void => {
     // Centralized dialog bootstrap keeps picker state consistent across actions.
     setDialog(next);
@@ -298,7 +326,7 @@ export function ClassesTab(): JSX.Element {
 
   return (
     <>
-      <div className="panel-stack">
+      <div className="panel-stack" ref={hotkeyScopeRef}>
         <section>
           <h4>Add class</h4>
           <div className="row add-class-row">

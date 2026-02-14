@@ -213,6 +213,11 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     return map;
   }, [classes]);
 
+  const selectedIdsForImage = useMemo(() => {
+    const available = new Set(image.annotations.map((a) => a.id));
+    return selectedAnnotationIds.filter((id) => available.has(id));
+  }, [image.annotations, selectedAnnotationIds]);
+
   // Load the browser image element once per selected source.
   useEffect(() => {
     const img = new Image();
@@ -324,6 +329,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   useEffect(() => {
     // Escape aborts all transient interactions; Ctrl/Cmd+A selects all annotations in image.
     const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
       const active = document.activeElement as HTMLElement | null;
       if (active && active.closest('input,textarea,select,[contenteditable="true"],.class-hotkey-btn.active')) return;
 
@@ -346,6 +352,23 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
         return;
       }
 
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.repeat) return;
+        if (active?.closest('.sidebar,.topbar,.menu-popover,.modal-card,.annotation-menu')) return;
+        if (document.querySelector('.modal-backdrop')) return;
+        if (selectedIdsForImage.length === 0) return;
+        e.preventDefault();
+        if (suppressDeleteAnnotationWarning) {
+          if (selectedIdsForImage.length > 1) deleteSelectedAnnotations();
+          else deleteAnnotation(selectedIdsForImage[0]);
+        } else {
+          setConfirmDeleteAnnIds([...selectedIdsForImage]);
+        }
+        setMenu(null);
+        setSwapClassAnnIds(null);
+        return;
+      }
+
       if (interactionMode !== 'add') return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length !== 1) return;
@@ -358,7 +381,17 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [classHotkeyMap, clearAnnotationSelection, interactionMode, selectAllAnnotationsCurrentImage, selectClass]);
+  }, [
+    classHotkeyMap,
+    clearAnnotationSelection,
+    deleteAnnotation,
+    deleteSelectedAnnotations,
+    interactionMode,
+    selectAllAnnotationsCurrentImage,
+    selectClass,
+    selectedIdsForImage,
+    suppressDeleteAnnotationWarning,
+  ]);
 
   useEffect(() => {
     setLiveDraftBBox(draftBBox);
@@ -384,11 +417,6 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       }),
     [classById, image.annotations]
   );
-
-  const selectedIdsForImage = useMemo(() => {
-    const available = new Set(image.annotations.map((a) => a.id));
-    return selectedAnnotationIds.filter((id) => available.has(id));
-  }, [image.annotations, selectedAnnotationIds]);
 
   const finalizeMarqueeSelection = (endPos: { x: number; y: number } | null): void => {
     if (!marqueeStart) return;

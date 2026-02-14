@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { useSelectedImage, useSortedFilteredAnnotations, useSortedFilteredImages } from '../../store/selectors';
 import { MiddleTruncate } from '../common/MiddleTruncate';
@@ -88,11 +88,14 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   const [listMenu, setListMenu] = useState<{ type: 'image' | 'annotation'; id: string; x: number; y: number } | null>(null);
   const [imageSearch, setImageSearch] = useState('');
   const [annotationSearch, setAnnotationSearch] = useState('');
+  const hotkeyScopeRef = useRef<HTMLDivElement | null>(null);
   const listMenuRef = useRef<HTMLDivElement | null>(null);
   const imageSort = useAppStore((s) => s.imageSort);
   const imageFilter = useAppStore((s) => s.imageFilter);
   const annotationSort = useAppStore((s) => s.annotationSort);
   const annotationFilter = useAppStore((s) => s.annotationFilter);
+  const selectedImageId = useAppStore((s) => s.selectedImageId);
+  const selectedAnnotationId = useAppStore((s) => s.selectedAnnotationId);
 
   const setImageSort = useAppStore((s) => s.setImageSort);
   const setImageFilter = useAppStore((s) => s.setImageFilter);
@@ -134,6 +137,24 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     const label = `#${ann.displayId} ${cls?.name ?? 'Unknown'}`.toLowerCase();
     return label.includes(annotationSearch.toLowerCase());
   });
+
+  const imageNavigationIndex = images.findIndex((img) => img.id === selectedImageId);
+  const imageNavigationCount = `${imageNavigationIndex >= 0 ? imageNavigationIndex + 1 : 0}/${images.length}`;
+  const imageNavigationLabel = imageNavigationIndex >= 0 ? images[imageNavigationIndex].name : 'No selection';
+
+  const annotationNavigationIndex = annotations.findIndex((ann) => ann.id === selectedAnnotationId);
+  const annotationNavigationCount = `${annotationNavigationIndex >= 0 ? annotationNavigationIndex + 1 : 0}/${annotations.length}`;
+  const annotationNavigationLabel =
+    annotationNavigationIndex >= 0
+      ? `#${annotations[annotationNavigationIndex].displayId} ${
+          classes.find((c) => c.id === annotations[annotationNavigationIndex].classId)?.name ?? 'Unknown'
+        }`
+      : 'No selection';
+
+  const selectedAnnotationIdsForCurrentImage = useMemo(() => {
+    const available = new Set(annotations.map((ann) => ann.id));
+    return selectedAnnotationIds.filter((id) => available.has(id));
+  }, [annotations, selectedAnnotationIds]);
 
   const isSelectionModifier = (evt: { ctrlKey?: boolean; metaKey?: boolean }): boolean =>
     Boolean(evt.ctrlKey || evt.metaKey);
@@ -211,6 +232,50 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     setConfirmDeleteImageIds(ids);
   };
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
+      if (e.repeat) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (document.querySelector('.modal-backdrop')) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest('input,textarea,select,[contenteditable="true"],.class-hotkey-btn.active')) return;
+
+      const scope = hotkeyScopeRef.current;
+      if (!scope || !active || !scope.contains(active)) return;
+
+      const canDeleteAnnotations = view !== 'images';
+      if (canDeleteAnnotations && selectedAnnotationIdsForCurrentImage.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteAnnotationIdsWithWarning(selectedAnnotationIdsForCurrentImage);
+        setListMenu(null);
+        return;
+      }
+
+      const canDeleteImages = view !== 'annotations';
+      if (!canDeleteImages) return;
+      const imageIds = selectedImageIds.length > 0 ? selectedImageIds : selectedImageId ? [selectedImageId] : [];
+      if (imageIds.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deleteImageIdsWithWarning(imageIds);
+      setListMenu(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [
+    deleteAnnotationIdsWithWarning,
+    deleteImageIdsWithWarning,
+    selectedAnnotationIdsForCurrentImage,
+    selectedImageId,
+    selectedImageIds,
+    view,
+  ]);
+
   const moveToFirstAnnotation = (): void => {
     if (annotations.length === 0) return;
     selectAnnotation(annotations[0].id);
@@ -225,11 +290,15 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     // Image panel: navigation + filtered list + multi-select + bulk delete context menu.
     <section className="split-panel">
       <h4>Image navigation</h4>
-      <div className="row">
+      <div className="row nav-row">
         <button className="icon-nav-btn" title="First image" onClick={moveToFirstImage}><NavIcon kind="first" /></button>
         <button className="icon-nav-btn" title="Previous image" onClick={moveToPrevImage}><NavIcon kind="prev" /></button>
         <button className="icon-nav-btn" title="Next image" onClick={moveToNextImage}><NavIcon kind="next" /></button>
         <button className="icon-nav-btn" title="Last image" onClick={moveToLastImage}><NavIcon kind="last" /></button>
+        <div className="nav-status" title={`${imageNavigationLabel} (${imageNavigationCount})`}>
+          <span className="nav-status-label">{imageNavigationLabel}</span>
+          <span className="nav-status-count">{imageNavigationCount}</span>
+        </div>
       </div>
       <label>
         Sort
@@ -318,11 +387,15 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     // Annotation panel: navigation + per-item controls + class reassignment.
     <section className="split-panel">
       <h4>Annotation navigation</h4>
-      <div className="row">
+      <div className="row nav-row">
         <button className="icon-nav-btn" title="First annotation" onClick={moveToFirstAnnotation}><NavIcon kind="first" /></button>
         <button className="icon-nav-btn" title="Previous annotation" onClick={moveToPrevAnnotation}><NavIcon kind="prev" /></button>
         <button className="icon-nav-btn" title="Next annotation" onClick={moveToNextAnnotation}><NavIcon kind="next" /></button>
         <button className="icon-nav-btn" title="Last annotation" onClick={moveToLastAnnotation}><NavIcon kind="last" /></button>
+        <div className="nav-status" title={`${annotationNavigationLabel} (${annotationNavigationCount})`}>
+          <span className="nav-status-label">{annotationNavigationLabel}</span>
+          <span className="nav-status-count">{annotationNavigationCount}</span>
+        </div>
       </div>
       <label>
         Sort
@@ -460,9 +533,11 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
 
   return (
     <>
-      {view === 'all' && <div className="panel-stack images-tab-split">{imagesPanel}{annotationsPanel}</div>}
-      {view === 'images' && <div className="panel-stack">{imagesPanel}</div>}
-      {view === 'annotations' && <div className="panel-stack">{annotationsPanel}</div>}
+      <div ref={hotkeyScopeRef}>
+        {view === 'all' && <div className="panel-stack images-tab-split">{imagesPanel}{annotationsPanel}</div>}
+        {view === 'images' && <div className="panel-stack">{imagesPanel}</div>}
+        {view === 'annotations' && <div className="panel-stack">{annotationsPanel}</div>}
+      </div>
 
       {listMenu && (
         <PortalMenu x={listMenu.x} y={listMenu.y} menuRef={listMenuRef}>

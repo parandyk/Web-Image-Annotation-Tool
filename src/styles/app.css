@@ -785,6 +785,41 @@ label.inline-check {
   stroke-linejoin: round;
 }
 
+.nav-row {
+  min-width: 0;
+}
+
+.nav-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.nav-status-label {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-status-count {
+  display: block;
+  flex: 0 0 auto;
+  color: var(--text-0);
+  font-family: Consolas, 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
 .images-tab-split {
   min-height: 0;
   height: 100%;
