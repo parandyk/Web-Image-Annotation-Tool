@@ -197,7 +197,7 @@ export function SettingsTab(): JSX.Element {
       </section>
 
       <section>
-        <h4>Notifications</h4>
+        <h4>Export</h4>
         <label className="inline-check">
           <input
             type="checkbox"
@@ -206,6 +206,10 @@ export function SettingsTab(): JSX.Element {
           />
           <span>Export unassigned class</span>
         </label>
+      </section>
+
+      <section>
+        <h4>Notifications</h4>
         <label className="inline-check">
           <input
             type="checkbox"
