@@ -186,6 +186,8 @@ export default function App(): JSX.Element {
 
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pagehide', onPageHide);
+    // Capture current workspace immediately once autosave is active.
+    schedule(0);
     return () => {
       disposed = true;
       if (debounceId !== null) {
