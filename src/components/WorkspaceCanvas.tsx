@@ -808,7 +808,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
           <button className={canvasDragMode === 'pan' ? 'active' : ''} onClick={() => setCanvasDragMode('pan')}>
             Pan
           </button>
-          <button onClick={resetView}>Reset View</button>
+          <button onClick={resetView}>Reset view</button>
         </div>
       </div>
       <div
