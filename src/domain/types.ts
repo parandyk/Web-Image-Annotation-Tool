@@ -23,6 +23,17 @@ export type Annotation = {
   displayId: number;
 };
 
+export type ImageSourceKind = 'image' | 'videoFrame';
+
+export type VideoFrameMeta = {
+  videoId: string;
+  videoName: string;
+  sourceFps: number;
+  sourceDurationMs: number;
+  frameIndex: number;
+  timestampMs: number;
+};
+
 export type ImageItem = {
   id: string;
   name: string;
@@ -31,6 +42,8 @@ export type ImageItem = {
   width: number;
   height: number;
   annotations: Annotation[];
+  sourceKind?: ImageSourceKind;
+  videoMeta?: VideoFrameMeta;
 };
 
 export type AnnotationAddingMode = 'click' | 'drag';

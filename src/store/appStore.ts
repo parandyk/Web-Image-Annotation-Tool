@@ -17,6 +17,10 @@ import {
 } from '../domain/types';
 import { getClassColor } from '../utils/colors';
 import { uid } from '../utils/id';
+import {
+  extractVideoFrames,
+  VideoParseOptions,
+} from '../utils/video';
 
 type Snapshot = {
   classes: ClassData[];
@@ -91,7 +95,9 @@ type AppState = ViewState & {
   setLiveDraftBBox: (bbox: BBox | null) => void;
 
   openImages: (files: File[]) => Promise<void>;
+  openVideoFrames: (file: File, options: VideoParseOptions) => Promise<void>;
   importDatasetFolder: (files: File[]) => Promise<void>;
+  importWorkspaceState: (file: File) => Promise<void>;
   openClassFileText: (content: string) => void;
   selectImage: (imageId: string | null) => void;
   selectClass: (classId: string) => void;
@@ -159,6 +165,7 @@ function cloneSnapshot(s: Snapshot): Snapshot {
     classes: s.classes.map((c) => ({ ...c })),
     images: s.images.map((img) => ({
       ...img,
+      videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
       annotations: img.annotations.map((a) => ({
         ...a,
         bbox: { ...a.bbox },
@@ -321,6 +328,7 @@ function withFreshObjectUrls(images: ImageItem[]): ImageItem[] {
   return images.map((img) => ({
     ...img,
     src: URL.createObjectURL(img.file),
+    videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
     annotations: img.annotations.map((ann) => ({ ...ann, bbox: { ...ann.bbox } })),
   }));
 }
@@ -522,6 +530,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           width: dims.width,
           height: dims.height,
           annotations: [],
+          sourceKind: 'image',
         });
       } catch {
         failedNames.push(file.name);
@@ -555,6 +564,79 @@ export const useAppStore = create<AppState>((set, get) => ({
       undoStack: [...state.undoStack, cloneSnapshot(base)],
       redoStack: [],
       ...(partialFailureStatus ? { statusText: partialFailureStatus } : {}),
+    }));
+  },
+
+  openVideoFrames: async (file, options) => {
+    const current = get();
+    if (!file) return;
+
+    const base: Snapshot = {
+      classes: current.classes,
+      images: current.images,
+      selectedClassId: current.selectedClassId,
+      selectedImageId: current.selectedImageId,
+      selectedAnnotationId: current.selectedAnnotationId,
+      selectedAnnotationIds: [...current.selectedAnnotationIds],
+      nextDisplayIdByClass: current.nextDisplayIdByClass,
+    };
+
+    set({ statusText: `Parsing video "${file.name}"...` });
+
+    let parsed: Awaited<ReturnType<typeof extractVideoFrames>>;
+    try {
+      parsed = await extractVideoFrames(file, options, (done, total) => {
+        if (done === 1 || done === total || done % 10 === 0) {
+          set({ statusText: `Parsing video "${file.name}" (${done}/${total})...` });
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      set({ statusText: `Video parsing failed: ${message}` });
+      return;
+    }
+
+    if (parsed.frames.length === 0) {
+      set({ statusText: 'No frames were extracted from the selected video.' });
+      return;
+    }
+
+    const videoId = uid('video');
+    const takenNames = new Set(current.images.map((img) => img.name));
+    const newImages: ImageItem[] = parsed.frames.map((frame) => {
+      const name = toUniqueName(frame.file.name, takenNames);
+      return {
+        id: uid('img'),
+        name,
+        file: frame.file,
+        src: URL.createObjectURL(frame.file),
+        width: parsed.probe.width,
+        height: parsed.probe.height,
+        annotations: [],
+        sourceKind: 'videoFrame',
+        videoMeta: {
+          videoId,
+          videoName: file.name,
+          sourceFps: options.sourceFps,
+          sourceDurationMs: Math.round(parsed.probe.durationSec * 1000),
+          frameIndex: frame.frameIndex,
+          timestampMs: frame.timestampMs,
+        },
+      };
+    });
+
+    set((state) => ({
+      images: [...state.images, ...newImages],
+      selectedImageId: state.selectedImageId ?? newImages[0]?.id ?? null,
+      selectedAnnotationId: state.selectedImageId ? state.selectedAnnotationId : null,
+      selectedAnnotationIds: state.selectedImageId ? state.selectedAnnotationIds : [],
+      nextDisplayIdByClass: {
+        ...state.nextDisplayIdByClass,
+        ...Object.fromEntries(newImages.map((img) => [img.id, 1])),
+      },
+      undoStack: [...state.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+      statusText: `Imported ${newImages.length} frames from "${file.name}".`,
     }));
   },
 
@@ -765,6 +847,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           width: dims.width,
           height: dims.height,
           annotations,
+          sourceKind: 'image',
         });
       }
     } else {
@@ -870,6 +953,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           width: dims.width,
           height: dims.height,
           annotations: [],
+          sourceKind: 'image',
         };
         nextDisplayIdByClass[imageItem.id] = Math.max(nextDisplayIdByClass[imageItem.id] ?? 1, 1);
         newImages.push(imageItem);
@@ -939,6 +1023,352 @@ export const useAppStore = create<AppState>((set, get) => ({
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
       statusText: `Imported ${format.toUpperCase()} dataset: ${newImages.length} images, ${importedAnnotationCount} annotations${skippedAnnotations > 0 ? `, ${skippedAnnotations} skipped` : ''}.`,
+    }));
+  },
+
+  importWorkspaceState: async (file) => {
+    const state = get();
+    if (!file) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    let zip: JSZip;
+    try {
+      zip = await JSZip.loadAsync(file);
+    } catch {
+      set({ statusText: 'Workspace import failed: invalid ZIP file.' });
+      return;
+    }
+
+    const stateFile = zip.file('workspace_state.json');
+    if (!stateFile) {
+      set({ statusText: 'Workspace import failed: workspace_state.json not found.' });
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await stateFile.async('text'));
+    } catch {
+      set({ statusText: 'Workspace import failed: workspace_state.json is invalid.' });
+      return;
+    }
+
+    const isObject = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null;
+    const asString = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+    const asNumber = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const asBoolean = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
+    const enumValue = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
+      typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
+    const clampValue = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+    const root = isObject(payload) ? payload : {};
+    const rawSettings = isObject(root.settings) ? root.settings : {};
+    const defaultView = getDefaultViewState();
+    const importedView: ViewState = {
+      interactionMode: enumValue(rawSettings.interactionMode, ['add', 'edit'] as const, defaultView.interactionMode),
+      addingMode: enumValue(rawSettings.addingMode, ['click', 'drag'] as const, defaultView.addingMode),
+      imageSort: enumValue(
+        rawSettings.imageSort,
+        ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
+        defaultView.imageSort
+      ),
+      imageFilter: enumValue(rawSettings.imageFilter, ['none', 'hideAnnotated', 'hideUnannotated'] as const, defaultView.imageFilter),
+      annotationSort: enumValue(
+        rawSettings.annotationSort,
+        ['none', 'oldest', 'newest', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst'] as const,
+        defaultView.annotationSort
+      ),
+      annotationFilter: enumValue(
+        rawSettings.annotationFilter,
+        ['none', 'hideAssigned', 'hideUnassigned'] as const,
+        defaultView.annotationFilter
+      ),
+      classSort: enumValue(
+        rawSettings.classSort,
+        ['none', 'alphabetical', 'reversedAlphabetical', 'countAscending', 'countDescending'] as const,
+        defaultView.classSort
+      ),
+      classFilter: enumValue(rawSettings.classFilter, ['none', 'hideUsed', 'hideUnused'] as const, defaultView.classFilter),
+      suppressUnassignedExportWarningDialog:
+        asBoolean(rawSettings.suppressUnassignedExportWarningDialog) ?? defaultView.suppressUnassignedExportWarningDialog,
+      suppressDeleteAnnotationWarningDialog:
+        asBoolean(rawSettings.suppressDeleteAnnotationWarningDialog) ?? defaultView.suppressDeleteAnnotationWarningDialog,
+      suppressDeleteImageWarningDialog:
+        asBoolean(rawSettings.suppressDeleteImageWarningDialog) ?? defaultView.suppressDeleteImageWarningDialog,
+      suppressRemoveClassInstancesWarningDialog:
+        asBoolean(rawSettings.suppressRemoveClassInstancesWarningDialog) ?? defaultView.suppressRemoveClassInstancesWarningDialog,
+      exportIncludeUnassigned: asBoolean(rawSettings.exportIncludeUnassigned) ?? defaultView.exportIncludeUnassigned,
+      showLabels: asBoolean(rawSettings.showLabels) ?? defaultView.showLabels,
+      showOnlySelectedThumbs: asBoolean(rawSettings.showOnlySelectedThumbs) ?? defaultView.showOnlySelectedThumbs,
+      bboxOpacity: clampValue(asNumber(rawSettings.bboxOpacity) ?? defaultView.bboxOpacity, 0, 1),
+      lineThickness: clampValue(asNumber(rawSettings.lineThickness) ?? defaultView.lineThickness, 0.5, 12),
+      drawBoxFill: asBoolean(rawSettings.drawBoxFill) ?? defaultView.drawBoxFill,
+      drawBoxBorder: asBoolean(rawSettings.drawBoxBorder) ?? defaultView.drawBoxBorder,
+      showCrosshair: asBoolean(rawSettings.showCrosshair) ?? defaultView.showCrosshair,
+      dragDeadzonePx: Math.max(0, Math.floor(asNumber(rawSettings.dragDeadzonePx) ?? defaultView.dragDeadzonePx)),
+    };
+
+    const rawClasses = Array.isArray(root.classes) ? root.classes : [];
+    const classIds = new Set<string>();
+    const importedClasses: ClassData[] = [];
+    for (const rawClass of rawClasses) {
+      if (!isObject(rawClass)) continue;
+      let classId = asString(rawClass.id) ?? uid('class');
+      while (classIds.has(classId)) {
+        classId = uid('class');
+      }
+      classIds.add(classId);
+
+      const rawName = asString(rawClass.name) ?? `Class_${importedClasses.length + 1}`;
+      const sanitizedName = sanitizeClassName(rawName) || rawName.replace(/\s+/g, '_');
+      const color = asString(rawClass.color) ?? getClassColor(importedClasses.length);
+      const hotkeyRaw = asString(rawClass.hotkey);
+      const hotkey = hotkeyRaw && /^[A-Z0-9]$/i.test(hotkeyRaw) ? hotkeyRaw.toUpperCase() : undefined;
+
+      importedClasses.push({
+        id: classId,
+        name: sanitizedName,
+        color,
+        isVisible: asBoolean(rawClass.isVisible) ?? true,
+        isDefault: asBoolean(rawClass.isDefault) ?? false,
+        hotkey,
+      });
+    }
+
+    if (importedClasses.length === 0) {
+      importedClasses.push({
+        id: uid('class'),
+        name: FALLBACK_CLASS_NAME,
+        color: '#27272A',
+        isVisible: true,
+        isDefault: true,
+      });
+    }
+    const firstDefaultIndex = importedClasses.findIndex((c) => c.isDefault);
+    if (firstDefaultIndex < 0) {
+      importedClasses[0] = { ...importedClasses[0], isDefault: true };
+    } else {
+      for (let i = 0; i < importedClasses.length; i += 1) {
+        if (i === firstDefaultIndex) continue;
+        if (importedClasses[i].isDefault) {
+          importedClasses[i] = { ...importedClasses[i], isDefault: false };
+        }
+      }
+    }
+    const fallbackClassId = importedClasses.find((c) => c.isDefault)?.id ?? importedClasses[0].id;
+    const validClassIds = new Set(importedClasses.map((c) => c.id));
+
+    const rawImages = Array.isArray(root.images) ? root.images : [];
+    const importedImages: ImageItem[] = [];
+    const imageIds = new Set<string>();
+    const imageNames = new Set<string>();
+    let skippedImages = 0;
+    let skippedAnnotations = 0;
+
+    for (const rawImage of rawImages) {
+      if (!isObject(rawImage)) {
+        skippedImages += 1;
+        continue;
+      }
+
+      const fileName = asString(rawImage.fileName) ?? asString(rawImage.name);
+      if (!fileName) {
+        skippedImages += 1;
+        continue;
+      }
+      const zipImageEntry = zip.file(`images/${fileName}`) ?? zip.file(fileName);
+      if (!zipImageEntry) {
+        skippedImages += 1;
+        continue;
+      }
+
+      let imageBlob: Blob;
+      try {
+        imageBlob = await zipImageEntry.async('blob');
+      } catch {
+        skippedImages += 1;
+        continue;
+      }
+      const imageFile = new File([imageBlob], fileName, {
+        type: imageBlob.type || 'application/octet-stream',
+        lastModified: Date.now(),
+      });
+
+      let width = asNumber(rawImage.width) ?? 0;
+      let height = asNumber(rawImage.height) ?? 0;
+      if (width <= 0 || height <= 0) {
+        try {
+          const dims = await getImageDimensions(imageFile);
+          width = dims.width;
+          height = dims.height;
+        } catch {
+          skippedImages += 1;
+          continue;
+        }
+      }
+
+      let imageId = asString(rawImage.id) ?? uid('img');
+      while (imageIds.has(imageId)) {
+        imageId = uid('img');
+      }
+      imageIds.add(imageId);
+
+      const requestedName = asString(rawImage.name) ?? fileName;
+      const name = toUniqueName(requestedName, imageNames);
+      const rawAnnotations = Array.isArray(rawImage.annotations) ? rawImage.annotations : [];
+      const annotations: Annotation[] = [];
+      const annotationIds = new Set<string>();
+      let nextDisplayId = 1;
+
+      for (const rawAnn of rawAnnotations) {
+        if (!isObject(rawAnn)) {
+          skippedAnnotations += 1;
+          continue;
+        }
+        const rawBbox = isObject(rawAnn.bbox) ? rawAnn.bbox : null;
+        if (!rawBbox) {
+          skippedAnnotations += 1;
+          continue;
+        }
+        const x = asNumber(rawBbox.x);
+        const y = asNumber(rawBbox.y);
+        const w = asNumber(rawBbox.width);
+        const h = asNumber(rawBbox.height);
+        if (x === null || y === null || w === null || h === null) {
+          skippedAnnotations += 1;
+          continue;
+        }
+        const bbox = normalizeBBox({ x, y, width: w, height: h }, width, height);
+        if (bbox.width < 1 || bbox.height < 1) {
+          skippedAnnotations += 1;
+          continue;
+        }
+
+        let annotationId = asString(rawAnn.id) ?? uid('ann');
+        while (annotationIds.has(annotationId)) {
+          annotationId = uid('ann');
+        }
+        annotationIds.add(annotationId);
+
+        const requestedClassId = asString(rawAnn.classId) ?? fallbackClassId;
+        const classId = validClassIds.has(requestedClassId) ? requestedClassId : fallbackClassId;
+        const parsedDisplayId = asNumber(rawAnn.displayId);
+        const displayId = parsedDisplayId && parsedDisplayId >= 1 ? Math.floor(parsedDisplayId) : nextDisplayId;
+        nextDisplayId = Math.max(nextDisplayId, displayId + 1);
+
+        annotations.push({
+          id: annotationId,
+          classId,
+          bbox,
+          isVisible: asBoolean(rawAnn.isVisible) ?? true,
+          isAnchored: asBoolean(rawAnn.isAnchored) ?? false,
+          displayId,
+        });
+      }
+
+      const sourceKindRaw = asString(rawImage.sourceKind);
+      const sourceKind = sourceKindRaw === 'videoFrame' ? 'videoFrame' : 'image';
+      let videoMeta: ImageItem['videoMeta'] = undefined;
+      if (sourceKind === 'videoFrame' && isObject(rawImage.videoMeta)) {
+        const videoId = asString(rawImage.videoMeta.videoId);
+        const videoName = asString(rawImage.videoMeta.videoName);
+        const sourceFps = asNumber(rawImage.videoMeta.sourceFps);
+        const sourceDurationMs = asNumber(rawImage.videoMeta.sourceDurationMs);
+        const frameIndex = asNumber(rawImage.videoMeta.frameIndex);
+        const timestampMs = asNumber(rawImage.videoMeta.timestampMs);
+        if (videoId && videoName && sourceFps !== null && sourceDurationMs !== null && frameIndex !== null && timestampMs !== null) {
+          videoMeta = {
+            videoId,
+            videoName,
+            sourceFps,
+            sourceDurationMs: Math.max(0, Math.round(sourceDurationMs)),
+            frameIndex: Math.max(0, Math.round(frameIndex)),
+            timestampMs: Math.max(0, Math.round(timestampMs)),
+          };
+        }
+      }
+
+      importedImages.push({
+        id: imageId,
+        name,
+        file: imageFile,
+        src: URL.createObjectURL(imageFile),
+        width,
+        height,
+        annotations,
+        sourceKind,
+        videoMeta,
+      });
+    }
+
+    if (importedImages.length === 0) {
+      set({ statusText: 'Workspace import failed: no images could be restored.' });
+      return;
+    }
+
+    const rawSelection = isObject(root.selection) ? root.selection : {};
+    const requestedClassId = asString(rawSelection.selectedClassId);
+    const selectedClassId = requestedClassId && validClassIds.has(requestedClassId) ? requestedClassId : fallbackClassId;
+
+    const imageById = new Map(importedImages.map((img) => [img.id, img]));
+    const requestedImageId = asString(rawSelection.selectedImageId);
+    const selectedImageId = requestedImageId && imageById.has(requestedImageId) ? requestedImageId : importedImages[0]?.id ?? null;
+
+    const selectedImage = selectedImageId ? imageById.get(selectedImageId) ?? null : null;
+    const validAnnotationIds = new Set((selectedImage?.annotations ?? []).map((ann) => ann.id));
+    const rawSelectedAnnotationIds = Array.isArray(rawSelection.selectedAnnotationIds) ? rawSelection.selectedAnnotationIds : [];
+    const selectedAnnotationIds = Array.from(
+      new Set(
+        rawSelectedAnnotationIds
+          .map((value) => (typeof value === 'string' ? value : null))
+          .filter((value): value is string => Boolean(value && validAnnotationIds.has(value)))
+      )
+    );
+
+    const requestedAnnotationId = asString(rawSelection.selectedAnnotationId);
+    const selectedAnnotationId =
+      requestedAnnotationId && validAnnotationIds.has(requestedAnnotationId)
+        ? requestedAnnotationId
+        : selectedAnnotationIds[selectedAnnotationIds.length - 1] ?? null;
+
+    const nextDisplayIdByClass: Record<string, number> = {};
+    for (const img of importedImages) {
+      const computed = img.annotations.reduce((max, ann) => Math.max(max, ann.displayId + 1), 1);
+      nextDisplayIdByClass[img.id] = computed;
+    }
+    if (isObject(root.nextDisplayIdByClass)) {
+      for (const [imageId, value] of Object.entries(root.nextDisplayIdByClass)) {
+        if (!imageById.has(imageId)) continue;
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) continue;
+        nextDisplayIdByClass[imageId] = Math.max(nextDisplayIdByClass[imageId] ?? 1, Math.floor(value));
+      }
+    }
+
+    revokeImageSources(state.images);
+    set((s) => ({
+      ...importedView,
+      classes: importedClasses,
+      images: importedImages,
+      selectedClassId,
+      selectedImageId,
+      selectedAnnotationId,
+      selectedAnnotationIds,
+      liveDraftBBox: null,
+      nextDisplayIdByClass,
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+      statusText: `Imported workspace state: ${importedImages.length} images${skippedImages > 0 ? `, ${skippedImages} skipped` : ''}${skippedAnnotations > 0 ? `, ${skippedAnnotations} annotations skipped` : ''}.`,
     }));
   },
 
@@ -2244,6 +2674,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         id: img.id,
         name: img.name,
         fileName: imageFileNameById[img.id] ?? img.name,
+        sourceKind: img.sourceKind ?? 'image',
+        videoMeta: img.videoMeta
+          ? {
+              videoId: img.videoMeta.videoId,
+              videoName: img.videoMeta.videoName,
+              sourceFps: img.videoMeta.sourceFps,
+              sourceDurationMs: img.videoMeta.sourceDurationMs,
+              frameIndex: img.videoMeta.frameIndex,
+              timestampMs: img.videoMeta.timestampMs,
+            }
+          : null,
         width: img.width,
         height: img.height,
         annotations: img.annotations.map((ann) => ({

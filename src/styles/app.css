@@ -115,6 +115,11 @@ label.inline-check {
   color: var(--text-1);
 }
 
+.video-range-stack {
+  display: grid;
+  gap: 6px;
+}
+
 .app-shell {
   height: 100%;
   display: grid;

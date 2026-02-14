@@ -10,12 +10,36 @@ export async function pickImageFiles(): Promise<File[]> {
   });
 }
 
+export async function pickSingleVideoFile(): Promise<File | null> {
+  return new Promise((resolve) => {
+    // Single video picker for frame extraction workflow.
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.mp4,.mov,.m4v,.webm,.avi,.mkv';
+    input.multiple = false;
+    input.onchange = () => resolve(input.files?.[0] ?? null);
+    input.click();
+  });
+}
+
 export async function pickSingleTextLikeFile(): Promise<File | null> {
   return new Promise((resolve) => {
     // Used for class import and other single metadata files.
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.txt,.names,.yaml,.json,.xml';
+    input.multiple = false;
+    input.onchange = () => resolve(input.files?.[0] ?? null);
+    input.click();
+  });
+}
+
+export async function pickSingleZipFile(): Promise<File | null> {
+  return new Promise((resolve) => {
+    // Workspace state import uses a single exported zip archive.
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.zip,application/zip';
     input.multiple = false;
     input.onchange = () => resolve(input.files?.[0] ?? null);
     input.click();

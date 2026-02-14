@@ -9,8 +9,20 @@ export default function App(): JSX.Element {
   const initializeDefaults = useAppStore((s) => s.initializeDefaults);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
+  const moveToNextImage = useAppStore((s) => s.moveToNextImage);
+  const moveToPrevImage = useAppStore((s) => s.moveToPrevImage);
+  const moveToFirstImage = useAppStore((s) => s.moveToFirstImage);
+  const moveToLastImage = useAppStore((s) => s.moveToLastImage);
+  const moveToNextAnnotation = useAppStore((s) => s.moveToNextAnnotation);
+  const moveToPrevAnnotation = useAppStore((s) => s.moveToPrevAnnotation);
+  const images = useAppStore((s) => s.images);
+  const classes = useAppStore((s) => s.classes);
   const selectedImage = useSelectedImage();
   const [sidebarTab, setSidebarTab] = useState<'general' | 'images' | 'classes' | 'settings'>('general');
+  const hasWorkspaceStateToLose = useMemo(
+    () => images.length > 0 || classes.some((c) => !c.isDefault),
+    [classes, images]
+  );
 
   // Ensure the fallback class/default view state exists before any user action.
   useEffect(() => {
@@ -37,6 +49,64 @@ export default function App(): JSX.Element {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [redo, undo]);
+
+  useEffect(() => {
+    // Arrow-key navigation is disabled while typing/editing to avoid hijacking text inputs.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (document.querySelector('.modal-backdrop')) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest('input,textarea,select,[contenteditable="true"],.class-hotkey-btn.active')) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (e.shiftKey) moveToFirstImage();
+        else moveToPrevImage();
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (e.shiftKey) moveToLastImage();
+        else moveToNextImage();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveToPrevAnnotation();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveToNextAnnotation();
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [
+    moveToFirstImage,
+    moveToLastImage,
+    moveToNextAnnotation,
+    moveToNextImage,
+    moveToPrevAnnotation,
+    moveToPrevImage,
+  ]);
+
+  useEffect(() => {
+    if (!hasWorkspaceStateToLose) return;
+
+    const onBeforeUnload = (event: BeforeUnloadEvent): string => {
+      // Native browser warning helps prevent accidental refresh/close data loss.
+      event.preventDefault();
+      event.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasWorkspaceStateToLose]);
 
   const emptyState = useMemo(
     () => (

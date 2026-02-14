@@ -1,29 +1,84 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
-import { pickDirectoryFiles, pickImageFiles, pickSingleTextLikeFile } from '../utils/files';
+import { pickDirectoryFiles, pickImageFiles, pickSingleTextLikeFile, pickSingleVideoFile, pickSingleZipFile } from '../utils/files';
+import {
+  DEFAULT_VIDEO_PARSE_OPTIONS,
+  estimateExtractedFrameCount,
+  probeVideoFile,
+  VideoProbe,
+  VideoSamplingMode,
+} from '../utils/video';
 import { SettingsTab } from './tabs/SettingsTab';
 
-type MenuId = 'file' | 'export' | 'edit';
+type MenuId = 'open' | 'import' | 'export' | 'edit';
 const IMAGE_FILE_RE = /\.(jpg|jpeg|png|bmp|tiff|tif|webp|gif)$/i;
+
+type VideoImportDialog = {
+  file: File;
+  probe: VideoProbe;
+  sourceFps: number;
+  samplingMode: VideoSamplingMode;
+  everyNFrames: number;
+  targetFps: number;
+  startFrame: number;
+  endFrame: number;
+  maxFrames: number;
+};
+
+type VideoInputDraft = {
+  sourceFps: string;
+  startFrame: string;
+  endFrame: string;
+  everyNFrames: string;
+  targetFps: string;
+  maxFrames: string;
+};
+
+const DIGITS_ONLY_RE = /^\d*$/;
+const DECIMAL_RE = /^\d*(?:\.\d*)?$/;
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function formatTimeSec(seconds: number): string {
+  const safe = Math.max(0, seconds);
+  const totalMs = Math.round(safe * 1000);
+  const ms = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const s = totalSec % 60;
+  const totalMin = Math.floor(totalSec / 60);
+  const m = totalMin % 60;
+  const h = Math.floor(totalMin / 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
 
 export function TopBar(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, boolean | number | string> | null>(null);
   const [pendingExport, setPendingExport] = useState<{ format: 'yolo' | 'coco'; global: boolean } | null>(null);
   const [confirmClearWorkspace, setConfirmClearWorkspace] = useState(false);
+  const [videoImportDialog, setVideoImportDialog] = useState<VideoImportDialog | null>(null);
+  const [videoInputDraft, setVideoInputDraft] = useState<VideoInputDraft | null>(null);
+  const [videoImportBusy, setVideoImportBusy] = useState(false);
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const buttonRefs = useRef<Record<MenuId, HTMLButtonElement | null>>({
-    file: null,
+    open: null,
+    import: null,
     export: null,
     edit: null,
   });
   const popoverRefs = useRef<Record<MenuId, HTMLDivElement | null>>({
-    file: null,
+    open: null,
+    import: null,
     export: null,
     edit: null,
   });
   const openImages = useAppStore((s) => s.openImages);
+  const openVideoFrames = useAppStore((s) => s.openVideoFrames);
   const importDatasetFolder = useAppStore((s) => s.importDatasetFolder);
+  const importWorkspaceState = useAppStore((s) => s.importWorkspaceState);
   const closeAllImages = useAppStore((s) => s.closeAllImages);
   const clearWorkspace = useAppStore((s) => s.clearWorkspace);
   const openClassFileText = useAppStore((s) => s.openClassFileText);
@@ -71,6 +126,103 @@ export function TopBar(): JSX.Element {
   const setStatusText = useAppStore((s) => s.setStatusText);
 
   const hasImages = images.length > 0;
+
+  const sourceFrameCount = useMemo(() => {
+    if (!videoImportDialog) return 0;
+    return Math.max(1, Math.floor(videoImportDialog.probe.durationSec * videoImportDialog.sourceFps));
+  }, [videoImportDialog]);
+
+  const estimatedVideoOutputCount = useMemo(() => {
+    if (!videoImportDialog) return 0;
+    return estimateExtractedFrameCount(videoImportDialog.probe, {
+      ...DEFAULT_VIDEO_PARSE_OPTIONS,
+      sourceFps: videoImportDialog.sourceFps,
+      samplingMode: videoImportDialog.samplingMode,
+      everyNFrames: videoImportDialog.everyNFrames,
+      targetFps: videoImportDialog.targetFps,
+      startFrame: videoImportDialog.startFrame,
+      endFrame: videoImportDialog.endFrame,
+      maxFrames: videoImportDialog.maxFrames,
+    });
+  }, [videoImportDialog]);
+
+  const syncVideoDraft = (dialog: VideoImportDialog): void => {
+    setVideoInputDraft({
+      sourceFps: String(dialog.sourceFps),
+      startFrame: String(dialog.startFrame),
+      endFrame: String(dialog.endFrame),
+      everyNFrames: String(dialog.everyNFrames),
+      targetFps: String(dialog.targetFps),
+      maxFrames: String(dialog.maxFrames),
+    });
+  };
+
+  const commitSourceFps = (): void => {
+    const raw = videoInputDraft?.sourceFps ?? '';
+    setVideoImportDialog((prev) => {
+      if (!prev) return prev;
+      const parsed = raw === '' ? prev.sourceFps : Number(raw);
+      const sourceFps = clampNumber(Number.isFinite(parsed) ? parsed : prev.sourceFps, 1, 240);
+      const totalFrames = Math.max(1, Math.floor(prev.probe.durationSec * sourceFps));
+      const maxFrame = totalFrames - 1;
+      const startFrame = Math.min(prev.startFrame, maxFrame);
+      const endFrame = Math.max(startFrame, Math.min(prev.endFrame, maxFrame));
+      return { ...prev, sourceFps, startFrame, endFrame };
+    });
+  };
+
+  const commitStartFrame = (): void => {
+    const raw = videoInputDraft?.startFrame ?? '';
+    setVideoImportDialog((prev) => {
+      if (!prev) return prev;
+      const maxFrame = Math.max(0, Math.floor(prev.probe.durationSec * prev.sourceFps) - 1);
+      const parsed = raw === '' ? prev.startFrame : Math.floor(Number(raw));
+      const startFrame = clampNumber(Number.isFinite(parsed) ? parsed : prev.startFrame, 0, maxFrame);
+      const endFrame = Math.max(startFrame, Math.min(prev.endFrame, maxFrame));
+      return { ...prev, startFrame, endFrame };
+    });
+  };
+
+  const commitEndFrame = (): void => {
+    const raw = videoInputDraft?.endFrame ?? '';
+    setVideoImportDialog((prev) => {
+      if (!prev) return prev;
+      const maxFrame = Math.max(0, Math.floor(prev.probe.durationSec * prev.sourceFps) - 1);
+      const parsed = raw === '' ? prev.endFrame : Math.floor(Number(raw));
+      const endFrame = Math.max(prev.startFrame, clampNumber(Number.isFinite(parsed) ? parsed : prev.endFrame, 0, maxFrame));
+      return { ...prev, endFrame };
+    });
+  };
+
+  const commitEveryNFrames = (): void => {
+    const raw = videoInputDraft?.everyNFrames ?? '';
+    setVideoImportDialog((prev) => {
+      if (!prev) return prev;
+      const parsed = raw === '' ? prev.everyNFrames : Math.floor(Number(raw));
+      const everyNFrames = clampNumber(Number.isFinite(parsed) ? parsed : prev.everyNFrames, 1, 10000);
+      return { ...prev, everyNFrames };
+    });
+  };
+
+  const commitTargetFps = (): void => {
+    const raw = videoInputDraft?.targetFps ?? '';
+    setVideoImportDialog((prev) => {
+      if (!prev) return prev;
+      const parsed = raw === '' ? prev.targetFps : Number(raw);
+      const targetFps = clampNumber(Number.isFinite(parsed) ? parsed : prev.targetFps, 0.1, 120);
+      return { ...prev, targetFps };
+    });
+  };
+
+  const commitMaxFrames = (): void => {
+    const raw = videoInputDraft?.maxFrames ?? '';
+    setVideoImportDialog((prev) => {
+      if (!prev) return prev;
+      const parsed = raw === '' ? prev.maxFrames : Math.floor(Number(raw));
+      const maxFrames = clampNumber(Number.isFinite(parsed) ? parsed : prev.maxFrames, 1, 2000);
+      return { ...prev, maxFrames };
+    });
+  };
 
   // Snapshot lets modal settings support Save/Revert without immediate state loss.
   const currentSettingsSnapshot = (): Record<string, boolean | number | string> => ({
@@ -139,6 +291,57 @@ export function TopBar(): JSX.Element {
     openClassFileText(content);
   };
 
+  const onOpenVideo = async (): Promise<void> => {
+    const file = await pickSingleVideoFile();
+    if (!file) return;
+    closeMenus();
+    setStatusText(`Reading video metadata for "${file.name}"...`);
+    try {
+      const probe = await probeVideoFile(file);
+      const sourceFps = DEFAULT_VIDEO_PARSE_OPTIONS.sourceFps;
+      const totalFrames = Math.max(1, Math.floor(probe.durationSec * sourceFps));
+      setVideoImportDialog({
+        file,
+        probe,
+        sourceFps,
+        samplingMode: DEFAULT_VIDEO_PARSE_OPTIONS.samplingMode,
+        everyNFrames: DEFAULT_VIDEO_PARSE_OPTIONS.everyNFrames,
+        targetFps: DEFAULT_VIDEO_PARSE_OPTIONS.targetFps,
+        startFrame: 0,
+        endFrame: Math.max(0, Math.min(totalFrames - 1, DEFAULT_VIDEO_PARSE_OPTIONS.endFrame)),
+        maxFrames: DEFAULT_VIDEO_PARSE_OPTIONS.maxFrames,
+      });
+      setStatusText(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setStatusText(`Could not open video: ${message}`);
+    }
+  };
+
+  const runVideoImport = async (): Promise<void> => {
+    if (!videoImportDialog || videoImportBusy) return;
+    setVideoImportBusy(true);
+    try {
+      const before = useAppStore.getState().images.length;
+      await openVideoFrames(videoImportDialog.file, {
+        ...DEFAULT_VIDEO_PARSE_OPTIONS,
+        sourceFps: videoImportDialog.sourceFps,
+        samplingMode: videoImportDialog.samplingMode,
+        everyNFrames: videoImportDialog.everyNFrames,
+        targetFps: videoImportDialog.targetFps,
+        startFrame: videoImportDialog.startFrame,
+        endFrame: videoImportDialog.endFrame,
+        maxFrames: videoImportDialog.maxFrames,
+      });
+      const after = useAppStore.getState().images.length;
+      if (after > before) {
+        setVideoImportDialog(null);
+      }
+    } finally {
+      setVideoImportBusy(false);
+    }
+  };
+
   const onOpenImageFolder = async (): Promise<void> => {
     const files = await pickDirectoryFiles();
     // Folder import for images only, unlike dataset import which parses labels/metadata.
@@ -153,6 +356,12 @@ export function TopBar(): JSX.Element {
   const onImportDataset = async (): Promise<void> => {
     const files = await pickDirectoryFiles();
     await importDatasetFolder(files);
+  };
+
+  const onImportWorkspaceState = async (): Promise<void> => {
+    const file = await pickSingleZipFile();
+    if (!file) return;
+    await importWorkspaceState(file);
   };
 
   const closeMenus = (): void => setOpenMenu(null);
@@ -215,20 +424,31 @@ export function TopBar(): JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         setOpenMenu(null);
+        if (videoImportDialog && !videoImportBusy) {
+          setVideoImportDialog(null);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [videoImportBusy, videoImportDialog]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen && !videoImportDialog) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [settingsOpen]);
+  }, [settingsOpen, videoImportDialog]);
+
+  useEffect(() => {
+    if (!videoImportDialog) {
+      setVideoInputDraft(null);
+      return;
+    }
+    syncVideoDraft(videoImportDialog);
+  }, [videoImportDialog]);
 
   useEffect(() => {
     if (!statusText) return;
@@ -241,16 +461,32 @@ export function TopBar(): JSX.Element {
     <>
       <header className="topbar">
         <div className="menu-group">
-          <div className={`menu ${openMenu === 'file' ? 'open' : ''}`}>
-            <button ref={(el) => (buttonRefs.current.file = el)} className="menu-trigger" onClick={() => toggleMenu('file')}>
-              File
+          <div className={`menu ${openMenu === 'open' ? 'open' : ''}`}>
+            <button ref={(el) => (buttonRefs.current.open = el)} className="menu-trigger" onClick={() => toggleMenu('open')}>
+              Open
             </button>
-            {openMenu === 'file' && (
-              <div ref={(el) => (popoverRefs.current.file = el)} className="menu-popover">
+            {openMenu === 'open' && (
+              <div ref={(el) => (popoverRefs.current.open = el)} className="menu-popover">
                 <button onClick={() => runAndClose(onOpenImages)}>Open images</button>
+                <button onClick={() => runAndClose(onOpenVideo)}>Open video</button>
                 <button onClick={() => runAndClose(onOpenImageFolder)}>Open image folder</button>
+              </div>
+            )}
+          </div>
+
+          <div className={`menu ${openMenu === 'import' ? 'open' : ''}`}>
+            <button
+              ref={(el) => (buttonRefs.current.import = el)}
+              className="menu-trigger"
+              onClick={() => toggleMenu('import')}
+            >
+              Import
+            </button>
+            {openMenu === 'import' && (
+              <div ref={(el) => (popoverRefs.current.import = el)} className="menu-popover">
                 <button onClick={() => runAndClose(onOpenClasses)}>Import classes</button>
                 <button onClick={() => runAndClose(onImportDataset)}>Import dataset folder</button>
+                <button onClick={() => runAndClose(onImportWorkspaceState)}>Import workspace state</button>
               </div>
             )}
           </div>
@@ -360,6 +596,185 @@ export function TopBar(): JSX.Element {
                 Revert to Default
               </button>
               <button onClick={() => setSettingsOpen(false)}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {videoImportDialog && (
+        <div className="modal-backdrop">
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-stack">
+              <section>
+                <h4>Open video</h4>
+                <p className="slider-meta">
+                  {videoImportDialog.file.name} | {videoImportDialog.probe.width}x{videoImportDialog.probe.height} |{' '}
+                  {formatTimeSec(videoImportDialog.probe.durationSec)}
+                </p>
+
+                <label>
+                  Source FPS (estimate)
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={videoInputDraft?.sourceFps ?? ''}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (!DECIMAL_RE.test(next)) return;
+                      setVideoInputDraft((prev) => (prev ? { ...prev, sourceFps: next } : prev));
+                    }}
+                    onBlur={commitSourceFps}
+                  />
+                </label>
+
+                <div className="video-range-stack">
+                  <label>
+                    Start frame
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={videoInputDraft?.startFrame ?? ''}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (!DIGITS_ONLY_RE.test(next)) return;
+                        setVideoInputDraft((prev) => (prev ? { ...prev, startFrame: next } : prev));
+                      }}
+                      onBlur={commitStartFrame}
+                    />
+                  </label>
+                  <label>
+                    End frame
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={videoInputDraft?.endFrame ?? ''}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (!DIGITS_ONLY_RE.test(next)) return;
+                        setVideoInputDraft((prev) => (prev ? { ...prev, endFrame: next } : prev));
+                      }}
+                      onBlur={commitEndFrame}
+                    />
+                  </label>
+                </div>
+                <div className="video-range-stack">
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, sourceFrameCount - 1)}
+                    value={videoImportDialog.startFrame}
+                    onChange={(e) =>
+                      setVideoImportDialog((prev) => {
+                        if (!prev) return prev;
+                        const nextStart = Math.min(prev.endFrame, Math.floor(Number(e.target.value) || 0));
+                        return { ...prev, startFrame: nextStart };
+                      })
+                    }
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, sourceFrameCount - 1)}
+                    value={videoImportDialog.endFrame}
+                    onChange={(e) =>
+                      setVideoImportDialog((prev) => {
+                        if (!prev) return prev;
+                        const nextEnd = Math.max(prev.startFrame, Math.floor(Number(e.target.value) || 0));
+                        return { ...prev, endFrame: nextEnd };
+                      })
+                    }
+                  />
+                </div>
+                <p className="slider-meta">
+                  Range: frame {videoImportDialog.startFrame} ({formatTimeSec(videoImportDialog.startFrame / videoImportDialog.sourceFps)}) to frame {videoImportDialog.endFrame}{' '}
+                  ({formatTimeSec(videoImportDialog.endFrame / videoImportDialog.sourceFps)})
+                </p>
+
+                <div className="row">
+                  <button
+                    className={videoImportDialog.samplingMode === 'everyN' ? 'active' : ''}
+                    onClick={() =>
+                      setVideoImportDialog((prev) => (prev ? { ...prev, samplingMode: 'everyN' } : prev))
+                    }
+                  >
+                    Every N frames
+                  </button>
+                  <button
+                    className={videoImportDialog.samplingMode === 'fps' ? 'active' : ''}
+                    onClick={() =>
+                      setVideoImportDialog((prev) => (prev ? { ...prev, samplingMode: 'fps' } : prev))
+                    }
+                  >
+                    Target FPS
+                  </button>
+                </div>
+
+                {videoImportDialog.samplingMode === 'everyN' ? (
+                  <label>
+                    Take every N frames
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={videoInputDraft?.everyNFrames ?? ''}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (!DIGITS_ONLY_RE.test(next)) return;
+                        setVideoInputDraft((prev) => (prev ? { ...prev, everyNFrames: next } : prev));
+                      }}
+                      onBlur={commitEveryNFrames}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    Sampling FPS
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={videoInputDraft?.targetFps ?? ''}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (!DECIMAL_RE.test(next)) return;
+                        setVideoInputDraft((prev) => (prev ? { ...prev, targetFps: next } : prev));
+                      }}
+                      onBlur={commitTargetFps}
+                    />
+                  </label>
+                )}
+
+                <label>
+                  Max extracted frames
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={videoInputDraft?.maxFrames ?? ''}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (!DIGITS_ONLY_RE.test(next)) return;
+                      setVideoInputDraft((prev) => (prev ? { ...prev, maxFrames: next } : prev));
+                    }}
+                    onBlur={commitMaxFrames}
+                  />
+                </label>
+
+                <p className="slider-meta">
+                  Estimated extraction count: {estimatedVideoOutputCount}
+                </p>
+
+                <div className="row dialog-actions">
+                  <button disabled={videoImportBusy} onClick={() => setVideoImportDialog(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    disabled={videoImportBusy || estimatedVideoOutputCount <= 0}
+                    onClick={runVideoImport}
+                  >
+                    {videoImportBusy ? 'Parsing...' : 'Parse video'}
+                  </button>
+                </div>
+              </section>
             </div>
           </div>
         </div>
