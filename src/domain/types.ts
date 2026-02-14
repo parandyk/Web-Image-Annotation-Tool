@@ -77,4 +77,4 @@ export type ClassSortMode =
   | 'countAscending'
   | 'countDescending';
 
-export type ExportAnnotationFormat = 'yolo' | 'coco';
+export type ExportAnnotationFormat = 'yolo' | 'coco' | 'voc';

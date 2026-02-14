@@ -368,6 +368,139 @@ function parseYoloNamesFromYaml(content: string): string[] {
   return [];
 }
 
+type VocObjectRecord = {
+  name: string;
+  xmin: number;
+  ymin: number;
+  xmax: number;
+  ymax: number;
+};
+
+type VocParsedAnnotation = {
+  filename: string | null;
+  width: number | null;
+  height: number | null;
+  objects: VocObjectRecord[];
+};
+
+function parseVocAnnotationXml(content: string): VocParsedAnnotation | null {
+  if (typeof DOMParser === 'undefined') return null;
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(content, 'application/xml');
+  if (doc.querySelector('parsererror')) return null;
+
+  const root = doc.querySelector('annotation');
+  if (!root) return null;
+
+  const readText = (scope: ParentNode, selector: string): string | null => {
+    const node = scope.querySelector(selector);
+    const raw = node?.textContent?.trim() ?? '';
+    return raw.length > 0 ? raw : null;
+  };
+
+  const readNumber = (scope: ParentNode, selector: string): number | null => {
+    const text = readText(scope, selector);
+    if (!text) return null;
+    const value = Number(text);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const filename = readText(root, 'filename');
+  const width = readNumber(root, 'size > width');
+  const height = readNumber(root, 'size > height');
+
+  const objects: VocObjectRecord[] = [];
+  for (const objectNode of Array.from(root.querySelectorAll('object'))) {
+    const name = readText(objectNode, 'name');
+    const xmin = readNumber(objectNode, 'bndbox > xmin');
+    const ymin = readNumber(objectNode, 'bndbox > ymin');
+    const xmax = readNumber(objectNode, 'bndbox > xmax');
+    const ymax = readNumber(objectNode, 'bndbox > ymax');
+    if (!name || xmin === null || ymin === null || xmax === null || ymax === null) continue;
+    objects.push({
+      name,
+      xmin: Math.min(xmin, xmax),
+      ymin: Math.min(ymin, ymax),
+      xmax: Math.max(xmin, xmax),
+      ymax: Math.max(ymin, ymax),
+    });
+  }
+
+  return {
+    filename,
+    width: width && width > 0 ? width : null,
+    height: height && height > 0 ? height : null,
+    objects,
+  };
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function formatVocNumber(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  if (Math.abs(rounded - Math.round(rounded)) < 1e-9) {
+    return String(Math.round(rounded));
+  }
+  return rounded.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function buildVocAnnotationXml(
+  imageName: string,
+  width: number,
+  height: number,
+  objects: Array<{ className: string; bbox: BBox }>
+): string {
+  const objectXml = objects
+    .map((obj) => {
+      const x1 = clamp(obj.bbox.x, 0, width);
+      const y1 = clamp(obj.bbox.y, 0, height);
+      const x2 = clamp(obj.bbox.x + obj.bbox.width, 0, width);
+      const y2 = clamp(obj.bbox.y + obj.bbox.height, 0, height);
+      return [
+        '  <object>',
+        `    <name>${escapeXml(obj.className)}</name>`,
+        '    <pose>Unspecified</pose>',
+        '    <truncated>0</truncated>',
+        '    <difficult>0</difficult>',
+        '    <bndbox>',
+        `      <xmin>${formatVocNumber(Math.min(x1, x2))}</xmin>`,
+        `      <ymin>${formatVocNumber(Math.min(y1, y2))}</ymin>`,
+        `      <xmax>${formatVocNumber(Math.max(x1, x2))}</xmax>`,
+        `      <ymax>${formatVocNumber(Math.max(y1, y2))}</ymax>`,
+        '    </bndbox>',
+        '  </object>',
+      ].join('\n');
+    })
+    .join('\n');
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<annotation>',
+    '  <folder>images</folder>',
+    `  <filename>${escapeXml(imageName)}</filename>`,
+    `  <path>images/${escapeXml(imageName)}</path>`,
+    '  <source>',
+    '    <database>Unknown</database>',
+    '  </source>',
+    '  <size>',
+    `    <width>${Math.max(1, Math.round(width))}</width>`,
+    `    <height>${Math.max(1, Math.round(height))}</height>`,
+    '    <depth>3</depth>',
+    '  </size>',
+    '  <segmented>0</segmented>',
+    objectXml,
+    '</annotation>',
+  ].join('\n');
+}
+
 function getNextDisplayIdForImage(
   nextDisplayIdByClass: Record<string, number>,
   images: ImageItem[],
@@ -721,15 +854,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       entries.find((e) => e.nameLower === 'data.yml') ??
       null;
     const yoloLabelEntries = entries.filter((e) => e.extLower === '.txt' && e.relPathLower.includes('/labels/'));
+    const xmlEntries = entries.filter((e) => e.extLower === '.xml');
+    const vocXmlEntries =
+      xmlEntries.filter((e) => e.relPathLower.includes('/annotations/') || e.relPathLower.includes('/annotation/'));
+    const vocCandidateEntries = vocXmlEntries.length > 0 ? vocXmlEntries : xmlEntries;
 
-    const format: 'coco' | 'yolo' | null = cocoJsonEntry
+    const format: 'coco' | 'yolo' | 'voc' | null = cocoJsonEntry
       ? 'coco'
       : classesEntry || yoloYamlEntry || yoloLabelEntries.length > 0
         ? 'yolo'
+        : vocCandidateEntries.length > 0
+          ? 'voc'
         : null;
 
     if (!format) {
-      set({ statusText: 'Dataset format not recognized. Expected COCO or YOLO export folder.' });
+      set({ statusText: 'Dataset format not recognized. Expected COCO, YOLO, or VOC export folder.' });
       return;
     }
 
@@ -910,7 +1049,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           sourceKind: 'image',
         });
       }
-    } else {
+    } else if (format === 'coco') {
       // COCO import builds classes from categories and maps image_id/category_id references.
       if (!cocoJsonEntry) {
         set({ statusText: 'COCO dataset import failed: instances JSON was not found.' });
@@ -1059,6 +1198,83 @@ export const useAppStore = create<AppState>((set, get) => ({
           displayId: allocateDisplayId(imageItem.id),
         });
         importedAnnotationCount += 1;
+      }
+    } else {
+      // VOC import expects image files and XML annotations (usually in an annotations folder).
+      const xmlByBaseName = new Map<string, DirectoryEntry>();
+      for (const xmlEntry of vocCandidateEntries) {
+        if (!xmlByBaseName.has(xmlEntry.baseNameLower)) {
+          xmlByBaseName.set(xmlEntry.baseNameLower, xmlEntry);
+        }
+      }
+
+      const preferredImages = imageEntries.filter((e) => e.relPathLower.includes('/images/'));
+      const sourceImages = preferredImages.length > 0 ? preferredImages : imageEntries;
+      for (const imageEntry of sourceImages) {
+        const importedImageId = uid('img');
+        let dims: { width: number; height: number };
+        try {
+          dims = await getImageDimensions(imageEntry.file);
+        } catch {
+          continue;
+        }
+
+        const annotations: Annotation[] = [];
+        const xmlEntry = xmlByBaseName.get(imageEntry.baseNameLower) ?? null;
+        if (xmlEntry) {
+          let parsedVoc: VocParsedAnnotation | null = null;
+          try {
+            parsedVoc = parseVocAnnotationXml(await xmlEntry.file.text());
+          } catch {
+            parsedVoc = null;
+          }
+
+          if (parsedVoc) {
+            for (const object of parsedVoc.objects) {
+              const bbox = normalizeBBox(
+                {
+                  x: object.xmin,
+                  y: object.ymin,
+                  width: object.xmax - object.xmin,
+                  height: object.ymax - object.ymin,
+                },
+                dims.width,
+                dims.height
+              );
+              if (bbox.width < 1 || bbox.height < 1) {
+                skippedAnnotations += 1;
+                continue;
+              }
+
+              const classId = ensureClassId(object.name);
+              annotations.push({
+                id: uid('ann'),
+                classId,
+                bbox,
+                isVisible: true,
+                isAnchored: false,
+                displayId: allocateDisplayId(importedImageId),
+              });
+              importedAnnotationCount += 1;
+            }
+          }
+        }
+
+        const src = URL.createObjectURL(imageEntry.file);
+        nextDisplayIdByClass[importedImageId] = Math.max(
+          nextDisplayIdByClass[importedImageId] ?? 1,
+          annotations.reduce((max, ann) => Math.max(max, (ann.displayId ?? 0) + 1), 1)
+        );
+        newImages.push({
+          id: importedImageId,
+          name: toUniqueName(imageEntry.file.name, takenNames),
+          file: imageEntry.file,
+          src,
+          width: dims.width,
+          height: dims.height,
+          annotations,
+          sourceKind: 'image',
+        });
       }
     }
 
@@ -2834,6 +3050,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       zip.file('instances_default.json', JSON.stringify(coco, null, 2));
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(blob, `dataset_coco_${Date.now()}.zip`);
+      return;
+    }
+
+    if (format === 'voc') {
+      // VOC export: images/ + annotations/*.xml Pascal VOC files.
+      const zip = new JSZip();
+      const imagesFolder = zip.folder('images');
+      const annotationsFolder = zip.folder('annotations');
+      if (!imagesFolder || !annotationsFolder) return;
+
+      const classById = new Map(classes.map((c) => [c.id, c]));
+      for (const image of images) {
+        imagesFolder.file(image.name, image.file);
+        const objects = image.annotations
+          .filter((ann) => classById.has(ann.classId))
+          .map((ann) => ({
+            className: classById.get(ann.classId)?.name ?? FALLBACK_CLASS_NAME,
+            bbox: ann.bbox,
+          }));
+        const xml = buildVocAnnotationXml(image.name, image.width, image.height, objects);
+        const xmlName = image.name.replace(/\.[^.]+$/, '.xml');
+        annotationsFolder.file(xmlName, xml);
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, `dataset_voc_${Date.now()}.zip`);
     }
   },
 

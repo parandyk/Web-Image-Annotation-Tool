@@ -57,7 +57,7 @@ function formatTimeSec(seconds: number): string {
 export function TopBar(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, boolean | number | string> | null>(null);
-  const [pendingExport, setPendingExport] = useState<{ format: 'yolo' | 'coco'; global: boolean } | null>(null);
+  const [pendingExport, setPendingExport] = useState<{ format: 'yolo' | 'coco' | 'voc'; global: boolean } | null>(null);
   const [confirmClearWorkspace, setConfirmClearWorkspace] = useState(false);
   const [videoImportDialog, setVideoImportDialog] = useState<VideoImportDialog | null>(null);
   const [videoInputDraft, setVideoInputDraft] = useState<VideoInputDraft | null>(null);
@@ -259,17 +259,37 @@ export function TopBar(): JSX.Element {
     setSuppressRemoveInstances(Boolean(snap.suppressRemoveInstances));
   };
 
-  const exportButtons = useMemo(
+  const exportAnnotationGroups = useMemo(
     () => [
-      { id: 'local-yolo', label: 'Export current image YOLO', format: 'yolo' as const, global: false },
-      { id: 'global-yolo', label: 'Export all images YOLO', format: 'yolo' as const, global: true },
-      { id: 'local-coco', label: 'Export current image COCO', format: 'coco' as const, global: false },
-      { id: 'global-coco', label: 'Export all images COCO', format: 'coco' as const, global: true },
+      {
+        id: 'coco',
+        label: 'COCO',
+        buttons: [
+          { id: 'local-coco', label: 'Export current image COCO', format: 'coco' as const, global: false },
+          { id: 'global-coco', label: 'Export all images COCO', format: 'coco' as const, global: true },
+        ],
+      },
+      {
+        id: 'yolo',
+        label: 'YOLO',
+        buttons: [
+          { id: 'local-yolo', label: 'Export current image YOLO', format: 'yolo' as const, global: false },
+          { id: 'global-yolo', label: 'Export all images YOLO', format: 'yolo' as const, global: true },
+        ],
+      },
+      {
+        id: 'voc',
+        label: 'VOC',
+        buttons: [
+          { id: 'local-voc', label: 'Export current image VOC', format: 'voc' as const, global: false },
+          { id: 'global-voc', label: 'Export all images VOC', format: 'voc' as const, global: true },
+        ],
+      },
     ],
     []
   );
 
-  const startExport = async (format: 'yolo' | 'coco', global: boolean): Promise<void> => {
+  const startExport = async (format: 'yolo' | 'coco' | 'voc', global: boolean): Promise<void> => {
     // Unassigned-class warning can be bypassed globally via settings.
     if (suppressUnassigned) {
       await exportAnnotations(format, global, exportIncludeUnassigned);
@@ -501,14 +521,22 @@ export function TopBar(): JSX.Element {
             </button>
             {openMenu === 'export' && (
               <div ref={(el) => (popoverRefs.current.export = el)} className="menu-popover">
-                <div className="menu-group-label">Export classes</div>
-                <button onClick={() => runAndClose(exportClassesTxt)}>Export classes</button>
                 <button onClick={() => runAndClose(exportWorkspaceState)}>Export workspace state</button>
-                <div className="menu-group-label">Export annotations</div>
-                {exportButtons.map((b) => (
-                  <button key={b.id} onClick={() => runAndClose(() => startExport(b.format, b.global))} disabled={!hasImages}>
-                    {b.label}
-                  </button>
+                <button onClick={() => runAndClose(exportClassesTxt)}>Export classes</button>
+                <div className="menu-group-label menu-group-label-separator">Export annotations</div>
+                {exportAnnotationGroups.map((group) => (
+                  <div key={group.id} className="menu-subgroup">
+                    <div className="menu-subgroup-label">{group.label}</div>
+                    {group.buttons.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => runAndClose(() => startExport(b.format, b.global))}
+                        disabled={!hasImages}
+                      >
+                        {b.label}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}
