@@ -21,6 +21,7 @@ import {
   extractVideoFrames,
   VideoParseOptions,
 } from '../utils/video';
+import { WorkspaceRecoverySnapshot, WorkspaceRecoveryViewState } from '../utils/workspaceRecovery';
 
 type Snapshot = {
   classes: ClassData[];
@@ -151,6 +152,8 @@ type AppState = ViewState & {
 
   undo: () => void;
   redo: () => void;
+  createRecoverySnapshot: () => WorkspaceRecoverySnapshot | null;
+  restoreRecoverySnapshot: (snapshot: WorkspaceRecoverySnapshot) => void;
 
   exportClassesTxt: () => Promise<void>;
   exportAnnotations: (format: ExportAnnotationFormat, global: boolean, includeFallback?: boolean) => Promise<void>;
@@ -177,6 +180,10 @@ function cloneSnapshot(s: Snapshot): Snapshot {
     selectedAnnotationIds: [...(s.selectedAnnotationIds ?? (s.selectedAnnotationId ? [s.selectedAnnotationId] : []))],
     nextDisplayIdByClass: { ...s.nextDisplayIdByClass },
   };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function normalizeBBox(b: BBox, maxW: number, maxH: number): BBox {
@@ -425,6 +432,59 @@ function toViewStateSnapshot(state: ViewState): ViewState {
     drawBoxBorder: state.drawBoxBorder,
     showCrosshair: state.showCrosshair,
     dragDeadzonePx: state.dragDeadzonePx,
+  };
+}
+
+function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | null | undefined): ViewState {
+  const defaults = getDefaultViewState();
+  const pickEnum = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
+    typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
+  const pickBool = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback);
+  const pickNum = (value: unknown, fallback: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+  const source = raw ?? {};
+  return {
+    interactionMode: pickEnum(source.interactionMode, ['add', 'edit'] as const, defaults.interactionMode),
+    addingMode: pickEnum(source.addingMode, ['click', 'drag'] as const, defaults.addingMode),
+    imageSort: pickEnum(
+      source.imageSort,
+      ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
+      defaults.imageSort
+    ),
+    imageFilter: pickEnum(source.imageFilter, ['none', 'hideAnnotated', 'hideUnannotated'] as const, defaults.imageFilter),
+    annotationSort: pickEnum(
+      source.annotationSort,
+      ['none', 'oldest', 'newest', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst'] as const,
+      defaults.annotationSort
+    ),
+    annotationFilter: pickEnum(source.annotationFilter, ['none', 'hideAssigned', 'hideUnassigned'] as const, defaults.annotationFilter),
+    classSort: pickEnum(
+      source.classSort,
+      ['none', 'alphabetical', 'reversedAlphabetical', 'countAscending', 'countDescending'] as const,
+      defaults.classSort
+    ),
+    classFilter: pickEnum(source.classFilter, ['none', 'hideUsed', 'hideUnused'] as const, defaults.classFilter),
+    suppressUnassignedExportWarningDialog: pickBool(
+      source.suppressUnassignedExportWarningDialog,
+      defaults.suppressUnassignedExportWarningDialog
+    ),
+    suppressDeleteAnnotationWarningDialog: pickBool(
+      source.suppressDeleteAnnotationWarningDialog,
+      defaults.suppressDeleteAnnotationWarningDialog
+    ),
+    suppressDeleteImageWarningDialog: pickBool(source.suppressDeleteImageWarningDialog, defaults.suppressDeleteImageWarningDialog),
+    suppressRemoveClassInstancesWarningDialog: pickBool(
+      source.suppressRemoveClassInstancesWarningDialog,
+      defaults.suppressRemoveClassInstancesWarningDialog
+    ),
+    exportIncludeUnassigned: pickBool(source.exportIncludeUnassigned, defaults.exportIncludeUnassigned),
+    showLabels: pickBool(source.showLabels, defaults.showLabels),
+    showOnlySelectedThumbs: pickBool(source.showOnlySelectedThumbs, defaults.showOnlySelectedThumbs),
+    bboxOpacity: clamp(pickNum(source.bboxOpacity, defaults.bboxOpacity), 0, 1),
+    lineThickness: clamp(pickNum(source.lineThickness, defaults.lineThickness), 0.5, 12),
+    drawBoxFill: pickBool(source.drawBoxFill, defaults.drawBoxFill),
+    drawBoxBorder: pickBool(source.drawBoxBorder, defaults.drawBoxBorder),
+    showCrosshair: pickBool(source.showCrosshair, defaults.showCrosshair),
+    dragDeadzonePx: Math.max(0, Math.floor(pickNum(source.dragDeadzonePx, defaults.dragDeadzonePx))),
   };
 }
 
@@ -2504,6 +2564,146 @@ export const useAppStore = create<AppState>((set, get) => ({
       images: hydratedImages,
       redoStack: trimmedRedo,
       undoStack: [...state.undoStack, cloneSnapshot(current)],
+    });
+  },
+
+  createRecoverySnapshot: () => {
+    const state = get();
+    const hasWorkspaceState = state.images.length > 0 || state.classes.some((c) => !c.isDefault);
+    if (!hasWorkspaceState) return null;
+
+    return {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      settings: toViewStateSnapshot(state),
+      classes: state.classes.map((c) => ({ ...c })),
+      images: state.images.map((img) => ({
+        id: img.id,
+        name: img.name,
+        file: img.file,
+        width: img.width,
+        height: img.height,
+        sourceKind: img.sourceKind,
+        videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
+        annotations: img.annotations.map((ann) => ({
+          ...ann,
+          bbox: { ...ann.bbox },
+        })),
+      })),
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: { ...state.nextDisplayIdByClass },
+    };
+  },
+
+  restoreRecoverySnapshot: (snapshot) => {
+    if (!snapshot || snapshot.version !== 1) {
+      set({ statusText: 'Recovery snapshot is not compatible with this app version.' });
+      return;
+    }
+
+    const state = get();
+    const settings = sanitizeViewStateSnapshot(snapshot.settings);
+    const classes: ClassData[] = snapshot.classes.map((cls) => ({
+      ...cls,
+      hotkey: cls.hotkey ? String(cls.hotkey).toUpperCase() : undefined,
+    }));
+    if (classes.length === 0) {
+      classes.push({
+        id: uid('class'),
+        name: FALLBACK_CLASS_NAME,
+        color: '#27272A',
+        isVisible: true,
+        isDefault: true,
+        hotkey: undefined,
+      });
+    }
+    const defaultClass = classes.find((c) => c.isDefault) ?? classes[0];
+    if (!defaultClass.isDefault) {
+      defaultClass.isDefault = true;
+    }
+    for (const cls of classes) {
+      if (cls !== defaultClass && cls.isDefault) cls.isDefault = false;
+    }
+    const classIds = new Set(classes.map((c) => c.id));
+
+    const images: ImageItem[] = snapshot.images.map((img) => {
+      const file = img.file;
+      const width = Math.max(1, Math.floor(img.width));
+      const height = Math.max(1, Math.floor(img.height));
+      const annotations = img.annotations
+        .map((ann) => {
+          const normalized = normalizeBBox(ann.bbox, width, height);
+          if (normalized.width < 1 || normalized.height < 1) return null;
+          const classId = classIds.has(ann.classId) ? ann.classId : defaultClass.id;
+          return {
+            id: ann.id,
+            classId,
+            bbox: normalized,
+            isVisible: ann.isVisible,
+            isAnchored: ann.isAnchored,
+            displayId: Math.max(1, Math.floor(ann.displayId ?? 1)),
+          };
+        })
+        .filter((ann): ann is Annotation => Boolean(ann));
+
+      return {
+        id: img.id,
+        name: img.name,
+        file,
+        src: URL.createObjectURL(file),
+        width,
+        height,
+        annotations,
+        sourceKind: img.sourceKind === 'videoFrame' ? 'videoFrame' : 'image',
+        videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
+      };
+    });
+
+    const imageIds = new Set(images.map((img) => img.id));
+    const selectedImageId =
+      snapshot.selectedImageId && imageIds.has(snapshot.selectedImageId)
+        ? snapshot.selectedImageId
+        : images[0]?.id ?? null;
+    const selectedImage = images.find((img) => img.id === selectedImageId) ?? null;
+    const annotationIds = new Set((selectedImage?.annotations ?? []).map((ann) => ann.id));
+    const selectedAnnotationIds = Array.from(
+      new Set(snapshot.selectedAnnotationIds.filter((id) => annotationIds.has(id)))
+    );
+    const selectedAnnotationId =
+      snapshot.selectedAnnotationId && annotationIds.has(snapshot.selectedAnnotationId)
+        ? snapshot.selectedAnnotationId
+        : selectedAnnotationIds[selectedAnnotationIds.length - 1] ?? null;
+    const selectedClassId =
+      snapshot.selectedClassId && classIds.has(snapshot.selectedClassId) ? snapshot.selectedClassId : defaultClass.id;
+
+    const nextDisplayIdByClass: Record<string, number> = {};
+    for (const image of images) {
+      const computed = image.annotations.reduce((max, ann) => Math.max(max, ann.displayId + 1), 1);
+      nextDisplayIdByClass[image.id] = computed;
+    }
+    for (const [imageId, rawValue] of Object.entries(snapshot.nextDisplayIdByClass ?? {})) {
+      if (!imageIds.has(imageId)) continue;
+      if (!Number.isFinite(rawValue) || rawValue < 1) continue;
+      nextDisplayIdByClass[imageId] = Math.max(nextDisplayIdByClass[imageId] ?? 1, Math.floor(rawValue));
+    }
+
+    revokeImageSources(state.images);
+    set({
+      ...settings,
+      classes,
+      images,
+      selectedClassId,
+      selectedImageId,
+      selectedAnnotationId,
+      selectedAnnotationIds,
+      nextDisplayIdByClass,
+      liveDraftBBox: null,
+      undoStack: [],
+      redoStack: [],
+      statusText: 'Recovered previous workspace state.',
     });
   },
 

@@ -261,10 +261,10 @@ export function TopBar(): JSX.Element {
 
   const exportButtons = useMemo(
     () => [
-      { id: 'local-yolo', label: 'Export selected YOLO', format: 'yolo' as const, global: false },
-      { id: 'global-yolo', label: 'Export global YOLO', format: 'yolo' as const, global: true },
-      { id: 'local-coco', label: 'Export selected COCO', format: 'coco' as const, global: false },
-      { id: 'global-coco', label: 'Export global COCO', format: 'coco' as const, global: true },
+      { id: 'local-yolo', label: 'Export current image YOLO', format: 'yolo' as const, global: false },
+      { id: 'global-yolo', label: 'Export all images YOLO', format: 'yolo' as const, global: true },
+      { id: 'local-coco', label: 'Export current image COCO', format: 'coco' as const, global: false },
+      { id: 'global-coco', label: 'Export all images COCO', format: 'coco' as const, global: true },
     ],
     []
   );
@@ -501,8 +501,10 @@ export function TopBar(): JSX.Element {
             </button>
             {openMenu === 'export' && (
               <div ref={(el) => (popoverRefs.current.export = el)} className="menu-popover">
-                <button onClick={() => runAndClose(exportClassesTxt)}>Export classes TXT</button>
+                <div className="menu-group-label">Export classes</div>
+                <button onClick={() => runAndClose(exportClassesTxt)}>Export classes</button>
                 <button onClick={() => runAndClose(exportWorkspaceState)}>Export workspace state</button>
+                <div className="menu-group-label">Export annotations</div>
                 {exportButtons.map((b) => (
                   <button key={b.id} onClick={() => runAndClose(() => startExport(b.format, b.global))} disabled={!hasImages}>
                     {b.label}

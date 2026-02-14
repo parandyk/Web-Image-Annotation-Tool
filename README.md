@@ -18,14 +18,17 @@ npm run build
 
 ## Description
 
-Coming soon!
+The tool allows for annotation of images and videos parsed into frames for standard object detection dataset exports. 
+
+Only COCO and YOLO formats are currently supported for both importing and exporting.
+
 
 ## Showcase
 
 The tool demo is available at:
 https://parandyk.github.io/Web-Image-Annotation-Tool/
 
-Coming soon!
+
 
 ## Disclaimer
 
