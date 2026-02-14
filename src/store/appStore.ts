@@ -136,6 +136,7 @@ type AppState = ViewState & {
   toggleAllAnchoringCurrentImage: () => void;
   setAllAnchoringCurrentImage: (anchored: boolean) => void;
   setAllVisibilityCurrentImage: (visible: boolean) => void;
+  toggleAllAnchoringGlobal: () => void;
   toggleAllVisibilityGlobal: () => void;
 
   moveToNextImage: () => void;
@@ -2518,6 +2519,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
       selectedAnnotationId: visible ? s.selectedAnnotationId : null,
       selectedAnnotationIds: visible ? s.selectedAnnotationIds : [],
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  toggleAllAnchoringGlobal: () => {
+    const state = get();
+    if (!state.images.some((i) => i.annotations.length > 0)) return;
+    const hasUnanchored = state.images.some((img) => img.annotations.some((a) => !a.isAnchored));
+    const nextAnchored = hasUnanchored;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) => ({
+        ...img,
+        annotations: img.annotations.map((a) => ({ ...a, isAnchored: nextAnchored })),
+      })),
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));

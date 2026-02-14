@@ -91,8 +91,11 @@ export function TopBar(): JSX.Element {
   const removeAllBBoxesGlobal = useAppStore((s) => s.removeAllBBoxesGlobal);
   const removeLastBBox = useAppStore((s) => s.removeLastBBox);
   const toggleAllAnchoringCurrentImage = useAppStore((s) => s.toggleAllAnchoringCurrentImage);
+  const toggleAllAnchoringGlobal = useAppStore((s) => s.toggleAllAnchoringGlobal);
+  const setAllVisibilityCurrentImage = useAppStore((s) => s.setAllVisibilityCurrentImage);
   const toggleAllVisibilityGlobal = useAppStore((s) => s.toggleAllVisibilityGlobal);
   const images = useAppStore((s) => s.images);
+  const selectedImageId = useAppStore((s) => s.selectedImageId);
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const showLabels = useAppStore((s) => s.showLabels);
@@ -126,6 +129,16 @@ export function TopBar(): JSX.Element {
   const setStatusText = useAppStore((s) => s.setStatusText);
 
   const hasImages = images.length > 0;
+  const selectedImage = useMemo(() => images.find((img) => img.id === selectedImageId) ?? null, [images, selectedImageId]);
+  const currentImageAnnotations = selectedImage?.annotations ?? [];
+  const hasCurrentImageAnnotations = currentImageAnnotations.length > 0;
+  const hasGlobalAnnotations = useMemo(() => images.some((img) => img.annotations.length > 0), [images]);
+
+  const onToggleCurrentImageVisibility = (): void => {
+    if (currentImageAnnotations.length === 0) return;
+    const nextVisible = currentImageAnnotations.some((ann) => !ann.isVisible);
+    setAllVisibilityCurrentImage(nextVisible);
+  };
 
   const sourceFrameCount = useMemo(() => {
     if (!videoImportDialog) return 0;
@@ -550,21 +563,32 @@ export function TopBar(): JSX.Element {
               <div ref={(el) => (popoverRefs.current.edit = el)} className="menu-popover">
                 <button onClick={() => runAndClose(async () => undo())}>Undo</button>
                 <button onClick={() => runAndClose(async () => redo())}>Redo</button>
-                <button onClick={() => runAndClose(async () => removeLastBBox())} disabled={!hasImages}>
+                <div className="menu-group-label menu-group-label-separator">Current image</div>
+                <button onClick={() => runAndClose(async () => removeLastBBox())} disabled={!hasCurrentImageAnnotations}>
                   Remove last annotation
                 </button>
-                <button onClick={() => runAndClose(async () => removeAllBBoxes())} disabled={!hasImages}>
-                  Remove all annotations (selected image)
+                <button onClick={() => runAndClose(async () => removeAllBBoxes())} disabled={!hasCurrentImageAnnotations}>
+                  Remove all annotations
                 </button>
-                <button onClick={() => runAndClose(async () => removeAllBBoxesGlobal())} disabled={!hasImages}>
+                <button onClick={() => runAndClose(async () => onToggleCurrentImageVisibility())} disabled={!hasCurrentImageAnnotations}>
+                  Toggle visibility
+                </button>
+                <button onClick={() => runAndClose(async () => toggleAllAnchoringCurrentImage())} disabled={!hasCurrentImageAnnotations}>
+                  Toggle anchoring
+                </button>
+
+                <div className="menu-group-label menu-group-label-separator">Global</div>
+                <button onClick={() => runAndClose(async () => removeAllBBoxesGlobal())} disabled={!hasGlobalAnnotations}>
                   Remove all annotations (global)
                 </button>
-                <button onClick={() => runAndClose(async () => toggleAllAnchoringCurrentImage())} disabled={!hasImages}>
-                  Toggle anchoring (selected image)
-                </button>
-                <button onClick={() => runAndClose(async () => toggleAllVisibilityGlobal())} disabled={!hasImages}>
+                <button onClick={() => runAndClose(async () => toggleAllVisibilityGlobal())} disabled={!hasGlobalAnnotations}>
                   Toggle visibility (global)
                 </button>
+                <button onClick={() => runAndClose(async () => toggleAllAnchoringGlobal())} disabled={!hasGlobalAnnotations}>
+                  Toggle anchoring (global)
+                </button>
+
+                <div className="menu-group-label menu-group-label-separator">Workspace</div>
                 <button onClick={() => runAndClose(async () => closeAllImages())} disabled={!hasImages}>
                   Close all images
                 </button>
