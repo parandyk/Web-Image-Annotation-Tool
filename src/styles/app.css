@@ -792,14 +792,15 @@ label.inline-check {
 .nav-status {
   margin-left: auto;
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
+  min-height: 32px;
   color: var(--text-1);
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 32px;
 }
 
 .nav-status-label {
@@ -810,6 +811,7 @@ label.inline-check {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 32px;
 }
 
 .nav-status-count {
@@ -818,6 +820,7 @@ label.inline-check {
   color: var(--text-0);
   font-family: Consolas, 'Courier New', monospace;
   font-variant-numeric: tabular-nums;
+  line-height: 32px;
 }
 
 .images-tab-split {
