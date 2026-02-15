@@ -669,7 +669,7 @@ export function TopBar(): JSX.Element {
         <div className="modal-backdrop">
           <div className="modal-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <h3>Settings</h3>
-            <SettingsTab />
+            <SettingsTab variant="dialog" />
             <div className="row dialog-actions">
               <button
                 onClick={() => {

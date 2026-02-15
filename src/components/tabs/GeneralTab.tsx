@@ -47,7 +47,7 @@ export function GeneralTab(): JSX.Element {
           <h4>Settings</h4>
           <button className="collapse-toggle" onClick={() => setOpenSettings((v) => !v)}>{openSettings ? '▼' : '▶'}</button>
         </div>
-        {openSettings && <div className="segment-scroll"><SettingsTab /></div>}
+        {openSettings && <div className="segment-scroll"><SettingsTab variant="sidebar" /></div>}
       </section>
     </div>
   );

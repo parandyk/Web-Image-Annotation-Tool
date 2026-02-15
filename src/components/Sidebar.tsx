@@ -36,7 +36,7 @@ export function Sidebar(props: {
         {tab === 'general' && <GeneralTab />}
         {tab === 'images' && <ImagesTab />}
         {tab === 'classes' && <ClassesTab />}
-        {tab === 'settings' && <SettingsTab />}
+        {tab === 'settings' && <SettingsTab variant="sidebar" />}
       </div>
     </aside>
   );

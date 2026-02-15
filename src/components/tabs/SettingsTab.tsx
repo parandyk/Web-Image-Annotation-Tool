@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../../store/appStore';
 
-export function SettingsTab(): JSX.Element {
+type SettingsTabProps = {
+  variant?: 'sidebar' | 'dialog';
+};
+
+export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Element {
+  const isDialogVariant = variant === 'dialog';
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const showLabels = useAppStore((s) => s.showLabels);
@@ -166,83 +171,91 @@ export function SettingsTab(): JSX.Element {
             Current: {bboxOpacity.toFixed(2)} | Min: 0.00 | Max: 1.00
           </span>
         </label>
-        <label>
-          Annotation border thickness
-          <input
-            type="range"
-            min={1}
-            max={8}
-            step={1}
-            value={lineThickness}
-            onChange={(e) => setLineThickness(Number(e.target.value))}
-          />
-          <span className="slider-meta">
-            Current: {lineThickness} | Min: 1 | Max: 8
-          </span>
-        </label>
-        <label>
-          Drag deadzone (px)
-          <input
-            type="range"
-            min={0}
-            max={16}
-            step={1}
-            value={dragDeadzonePx}
-            onChange={(e) => setDragDeadzonePx(Number(e.target.value))}
-          />
-          <span className="slider-meta">
-            Current: {dragDeadzonePx} | Min: 0 | Max: 16
-          </span>
-        </label>
+        {isDialogVariant && (
+          <>
+            <label>
+              Annotation border thickness
+              <input
+                type="range"
+                min={1}
+                max={8}
+                step={1}
+                value={lineThickness}
+                onChange={(e) => setLineThickness(Number(e.target.value))}
+              />
+              <span className="slider-meta">
+                Current: {lineThickness} | Min: 1 | Max: 8
+              </span>
+            </label>
+            <label>
+              Drag deadzone (px)
+              <input
+                type="range"
+                min={0}
+                max={16}
+                step={1}
+                value={dragDeadzonePx}
+                onChange={(e) => setDragDeadzonePx(Number(e.target.value))}
+              />
+              <span className="slider-meta">
+                Current: {dragDeadzonePx} | Min: 0 | Max: 16
+              </span>
+            </label>
+          </>
+        )}
       </section>
 
-      <section>
-        <h4>Export</h4>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={exportIncludeUnassigned}
-            onChange={(e) => setExportIncludeUnassigned(e.target.checked)}
-          />
-          <span>Export unassigned class</span>
-        </label>
-      </section>
+      {isDialogVariant && (
+        <>
+          <section>
+            <h4>Export</h4>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={exportIncludeUnassigned}
+                onChange={(e) => setExportIncludeUnassigned(e.target.checked)}
+              />
+              <span>Export unassigned class</span>
+            </label>
+          </section>
 
-      <section>
-        <h4>Notifications</h4>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={suppressUnassignedWarning}
-            onChange={(e) => setSuppressUnassigned(e.target.checked)}
-          />
-          <span>Suppress unassigned export warning</span>
-        </label>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={suppressDeleteAnnotationWarning}
-            onChange={(e) => setSuppressDeleteAnnotation(e.target.checked)}
-          />
-          <span>Suppress delete annotation warning</span>
-        </label>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={suppressDeleteImageWarning}
-            onChange={(e) => setSuppressDeleteImage(e.target.checked)}
-          />
-          <span>Suppress delete image warning</span>
-        </label>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={suppressRemoveClassInstancesWarning}
-            onChange={(e) => setSuppressRemoveClassInstances(e.target.checked)}
-          />
-          <span>Suppress remove class instances warning</span>
-        </label>
-      </section>
+          <section>
+            <h4>Notifications</h4>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={suppressUnassignedWarning}
+                onChange={(e) => setSuppressUnassigned(e.target.checked)}
+              />
+              <span>Suppress unassigned export warning</span>
+            </label>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={suppressDeleteAnnotationWarning}
+                onChange={(e) => setSuppressDeleteAnnotation(e.target.checked)}
+              />
+              <span>Suppress delete annotation warning</span>
+            </label>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={suppressDeleteImageWarning}
+                onChange={(e) => setSuppressDeleteImage(e.target.checked)}
+              />
+              <span>Suppress delete image warning</span>
+            </label>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={suppressRemoveClassInstancesWarning}
+                onChange={(e) => setSuppressRemoveClassInstances(e.target.checked)}
+              />
+              <span>Suppress remove class instances warning</span>
+            </label>
+          </section>
+        </>
+      )}
     </div>
   );
 }
