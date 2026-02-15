@@ -230,6 +230,8 @@ function cloneSnapshot(s: Snapshot): Snapshot {
     classes: s.classes.map((c) => ({ ...c })),
     images: s.images.map((img) => ({
       ...img,
+      // Keep snapshots file-backed and URL-free so undo/redo doesn't pin many blob URLs.
+      src: '',
       videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
       annotations: img.annotations.map((a) => ({
         ...a,
@@ -397,13 +399,21 @@ function revokeImageSources(images: ImageItem[]): void {
   }
 }
 
-function withFreshObjectUrls(images: ImageItem[]): ImageItem[] {
-  return images.map((img) => ({
-    ...img,
-    src: URL.createObjectURL(img.file),
-    videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
-    annotations: img.annotations.map((ann) => ({ ...ann, bbox: { ...ann.bbox } })),
-  }));
+function reconcileImageSourcesForSelection(images: ImageItem[], selectedImageId: string | null): ImageItem[] {
+  let changed = false;
+  const reconciled = images.map((image) => {
+    const shouldHaveSource = selectedImageId !== null && image.id === selectedImageId;
+    if (shouldHaveSource) {
+      if (image.src) return image;
+      changed = true;
+      return { ...image, src: URL.createObjectURL(image.file) };
+    }
+    if (!image.src) return image;
+    revokeObjectUrl(image.src);
+    changed = true;
+    return { ...image, src: '' };
+  });
+  return changed ? reconciled : images;
 }
 
 function parseYoloNamesFromYaml(content: string): string[] {
@@ -1259,7 +1269,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           id: uid('img'),
           name: toUniqueName(file.name, takenNames),
           file,
-          src: URL.createObjectURL(file),
+          src: '',
           width: dims.width,
           height: dims.height,
           isBookmarked: false,
@@ -1294,7 +1304,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           : null;
 
     set((state) => ({
-      images: [...state.images, ...newImages],
+      images: reconcileImageSourcesForSelection(
+        [...state.images, ...newImages],
+        state.selectedImageId ?? newImages[0]?.id ?? null
+      ),
       selectedImageId: state.selectedImageId ?? newImages[0]?.id ?? null,
       selectedAnnotationId: state.selectedImageId ? state.selectedAnnotationId : null,
       selectedAnnotationIds: state.selectedImageId ? state.selectedAnnotationIds : [],
@@ -1350,7 +1363,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         id: uid('img'),
         name,
         file: frame.file,
-        src: URL.createObjectURL(frame.file),
+        src: '',
         width: parsed.probe.width,
         height: parsed.probe.height,
         isBookmarked: false,
@@ -1368,7 +1381,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     set((state) => ({
-      images: [...state.images, ...newImages],
+      images: reconcileImageSourcesForSelection(
+        [...state.images, ...newImages],
+        state.selectedImageId ?? newImages[0]?.id ?? null
+      ),
       selectedImageId: state.selectedImageId ?? newImages[0]?.id ?? null,
       selectedAnnotationId: state.selectedImageId ? state.selectedAnnotationId : null,
       selectedAnnotationIds: state.selectedImageId ? state.selectedAnnotationIds : [],
@@ -1582,7 +1598,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
 
-        const src = URL.createObjectURL(imageEntry.file);
         nextDisplayIdByClass[importedImageId] = Math.max(
           nextDisplayIdByClass[importedImageId] ?? 1,
           annotations.reduce((max, ann) => Math.max(max, (ann.displayId ?? 0) + 1), 1)
@@ -1591,7 +1606,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           id: importedImageId,
           name: toUniqueName(imageEntry.file.name, takenNames),
           file: imageEntry.file,
-          src,
+          src: '',
           width: dims.width,
           height: dims.height,
           isBookmarked: false,
@@ -1693,12 +1708,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
 
-        const src = URL.createObjectURL(imageEntry.file);
         const imageItem: ImageItem = {
           id: uid('img'),
           name: toUniqueName(imageEntry.file.name, takenNames),
           file: imageEntry.file,
-          src,
+          src: '',
           width: dims.width,
           height: dims.height,
           isBookmarked: false,
@@ -1811,7 +1825,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
 
-        const src = URL.createObjectURL(imageEntry.file);
         nextDisplayIdByClass[importedImageId] = Math.max(
           nextDisplayIdByClass[importedImageId] ?? 1,
           annotations.reduce((max, ann) => Math.max(max, (ann.displayId ?? 0) + 1), 1)
@@ -1820,7 +1833,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           id: importedImageId,
           name: toUniqueName(imageEntry.file.name, takenNames),
           file: imageEntry.file,
-          src,
+          src: '',
           width: dims.width,
           height: dims.height,
           isBookmarked: false,
@@ -1845,7 +1858,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set((s) => ({
       classes: workingClasses,
-      images: [...s.images, ...newImages],
+      images: reconcileImageSourcesForSelection(
+        [...s.images, ...newImages],
+        s.selectedImageId ?? newImages[0]?.id ?? null
+      ),
       selectedClassId,
       selectedImageId: s.selectedImageId ?? newImages[0]?.id ?? null,
       selectedAnnotationId: s.selectedImageId ? s.selectedAnnotationId : null,
@@ -2159,7 +2175,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         id: imageId,
         name,
         file: imageFile,
-        src: URL.createObjectURL(imageFile),
+        src: '',
         width,
         height,
         isBookmarked: asBoolean(rawImage.isBookmarked) ?? false,
@@ -2220,7 +2236,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       ...importedView,
       classes: importedClasses,
-      images: importedImages,
+      images: reconcileImageSourcesForSelection(importedImages, selectedImageId),
       selectedClassId,
       selectedImageId,
       selectedAnnotationId,
@@ -2248,14 +2264,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectImage: (imageId) =>
-    set({
-      selectedImageId: imageId,
-      selectedAnnotationId: null,
-      selectedAnnotationIds: [],
-      liveDraftBBox: null,
-      liveDraftClassId: null,
-      deferredLastAnnotationId: null,
-      deferredLastImageId: null,
+    set((s) => {
+      const selectedImageId =
+        imageId !== null && s.images.some((img) => img.id === imageId)
+          ? imageId
+          : null;
+      return {
+        images: reconcileImageSourcesForSelection(s.images, selectedImageId),
+        selectedImageId,
+        selectedAnnotationId: null,
+        selectedAnnotationIds: [],
+        liveDraftBBox: null,
+        liveDraftClassId: null,
+        deferredLastAnnotationId: null,
+        deferredLastImageId: null,
+      };
     }),
   toggleImageBookmark: (imageId) => {
     const state = get();
@@ -3669,7 +3692,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!state.selectedImageId || state.images.length === 0) return;
     const idx = state.images.findIndex((i) => i.id === state.selectedImageId);
     const next = state.images[(idx + 1) % state.images.length];
-    set({ selectedImageId: next.id, selectedAnnotationId: null, selectedAnnotationIds: [] });
+    get().selectImage(next.id);
   },
 
   moveToPrevImage: () => {
@@ -3677,19 +3700,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!state.selectedImageId || state.images.length === 0) return;
     const idx = state.images.findIndex((i) => i.id === state.selectedImageId);
     const prev = state.images[(idx - 1 + state.images.length) % state.images.length];
-    set({ selectedImageId: prev.id, selectedAnnotationId: null, selectedAnnotationIds: [] });
+    get().selectImage(prev.id);
   },
 
   moveToFirstImage: () => {
     const state = get();
     if (state.images.length === 0) return;
-    set({ selectedImageId: state.images[0].id, selectedAnnotationId: null, selectedAnnotationIds: [] });
+    get().selectImage(state.images[0].id);
   },
 
   moveToLastImage: () => {
     const state = get();
     if (state.images.length === 0) return;
-    set({ selectedImageId: state.images[state.images.length - 1].id, selectedAnnotationId: null, selectedAnnotationIds: [] });
+    get().selectImage(state.images[state.images.length - 1].id);
   },
 
   moveToNextAnnotation: () => {
@@ -3735,7 +3758,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextDisplayIdByClass = { ...s.nextDisplayIdByClass };
       delete nextDisplayIdByClass[imageId];
       return {
-        images,
+        images: reconcileImageSourcesForSelection(images, selectedImageId),
         selectedImageId,
         selectedAnnotationId: null,
         selectedAnnotationIds: [],
@@ -3771,7 +3794,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         delete nextDisplayIdByClass[id];
       }
       return {
-        images,
+        images: reconcileImageSourcesForSelection(images, selectedImageId),
         selectedImageId,
         selectedAnnotationId: null,
         selectedAnnotationIds: [],
@@ -3863,7 +3886,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const trimmedUndo = state.undoStack.slice(0, -1);
     const restored = cloneSnapshot(previous);
     revokeImageSources(state.images);
-    const hydratedImages = withFreshObjectUrls(restored.images);
+    const hydratedImages = reconcileImageSourcesForSelection(restored.images, restored.selectedImageId);
 
     set({
       ...restored,
@@ -3895,7 +3918,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const trimmedRedo = state.redoStack.slice(0, -1);
     const restored = cloneSnapshot(next);
     revokeImageSources(state.images);
-    const hydratedImages = withFreshObjectUrls(restored.images);
+    const hydratedImages = reconcileImageSourcesForSelection(restored.images, restored.selectedImageId);
 
     set({
       ...restored,
@@ -3996,7 +4019,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         id: img.id,
         name: img.name,
         file,
-        src: URL.createObjectURL(file),
+        src: '',
         width,
         height,
         isBookmarked: Boolean(img.isBookmarked),
@@ -4042,7 +4065,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       ...settings,
       classes,
-      images,
+      images: reconcileImageSourcesForSelection(images, selectedImageId),
       selectedClassId,
       selectedImageId,
       selectedAnnotationId,
