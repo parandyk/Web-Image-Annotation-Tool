@@ -5,8 +5,14 @@ import { ImageItem, BBox } from '../domain/types';
 import { useAppStore } from '../store/appStore';
 import { PortalMenu } from './common/PortalMenu';
 
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 10;
+const MIN_ZOOM_ABSOLUTE = 0.02;
+const MAX_ZOOM_ABSOLUTE = 64;
+const MIN_ZOOM_FIT_MULTIPLIER = 0.1;
+const MAX_ZOOM_FIT_MULTIPLIER = 10;
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 // Clamp any bbox-like input to image coordinates while preserving minimum valid size.
 function clampBBoxToImage(b: BBox, image: ImageItem): BBox {
@@ -185,6 +191,18 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const [crosshairImgPos, setCrosshairImgPos] = useState<{ x: number; y: number }>({ x: image.width / 2, y: image.height / 2 });
   const [pointerInsideImage, setPointerInsideImage] = useState(false);
 
+  const zoomBounds = useMemo(() => {
+    const fitScaleRaw = Math.min(stageSize.width / image.width, stageSize.height / image.height);
+    const fitScale = Number.isFinite(fitScaleRaw) && fitScaleRaw > 0 ? fitScaleRaw : 1;
+    const minScale = clampNumber(fitScale * MIN_ZOOM_FIT_MULTIPLIER, MIN_ZOOM_ABSOLUTE, MAX_ZOOM_ABSOLUTE);
+    const maxScale = clampNumber(
+      Math.max(fitScale * MAX_ZOOM_FIT_MULTIPLIER, minScale),
+      MIN_ZOOM_ABSOLUTE,
+      MAX_ZOOM_ABSOLUTE
+    );
+    return { fitScale, minScale, maxScale };
+  }, [image.height, image.width, stageSize.height, stageSize.width]);
+
   // Unified cancel path for both click-click and drag draft creation flows.
   const abortDraft = (): void => {
     setDraftStart(null);
@@ -242,8 +260,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
 
   useEffect(() => {
     // Refit and reset interaction state whenever image or viewport size changes.
-    const fitScale = Math.min(stageSize.width / image.width, stageSize.height / image.height);
-    const clampedFitScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScale > 0 ? fitScale : 1));
+    const clampedFitScale = clampNumber(zoomBounds.fitScale, zoomBounds.minScale, zoomBounds.maxScale);
     const x = (stageSize.width - image.width * clampedFitScale) / 2;
     const y = (stageSize.height - image.height * clampedFitScale) / 2;
 
@@ -257,7 +274,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setMarqueeStart(null);
     setMarqueeBBox(null);
     setMarqueeSeedSelection([]);
-  }, [image.id, image.width, image.height, stageSize.height, stageSize.width]);
+  }, [image.id, image.width, image.height, stageSize.height, stageSize.width, zoomBounds.fitScale, zoomBounds.maxScale, zoomBounds.minScale]);
 
   useEffect(() => {
     // Crosshair tracks pointer globally but is clamped to image bounds.
@@ -502,7 +519,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     const zoomFactor = 1.08;
     const direction = e.evt.deltaY > 0 ? -1 : 1;
     const nextScale = direction > 0 ? oldScale * zoomFactor : oldScale / zoomFactor;
-    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextScale));
+    const newScale = clampNumber(nextScale, zoomBounds.minScale, zoomBounds.maxScale);
 
     const mousePointTo = {
       x: (pointer.x - stage.x()) / oldScale,
@@ -768,8 +785,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   }, [addingMode, draftStart, dragDeadzonePx, image.height, image.width, interactionMode]);
 
   const resetView = (): void => {
-    const fitScale = Math.min(stageSize.width / image.width, stageSize.height / image.height);
-    const clampedFitScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitScale > 0 ? fitScale : 1));
+    const clampedFitScale = clampNumber(zoomBounds.fitScale, zoomBounds.minScale, zoomBounds.maxScale);
     const x = (stageSize.width - image.width * clampedFitScale) / 2;
     const y = (stageSize.height - image.height * clampedFitScale) / 2;
     setViewScale(clampedFitScale);
