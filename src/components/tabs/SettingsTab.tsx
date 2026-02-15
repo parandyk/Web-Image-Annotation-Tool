@@ -20,7 +20,6 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const showMinimap = useAppStore((s) => s.showMinimap);
   const minimapLocation = useAppStore((s) => s.minimapLocation);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
-  const suppressUnassignedWarning = useAppStore((s) => s.suppressUnassignedExportWarningDialog);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const suppressDeleteImageWarning = useAppStore((s) => s.suppressDeleteImageWarningDialog);
@@ -40,7 +39,6 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const setShowMinimap = useAppStore((s) => s.setShowMinimap);
   const setMinimapLocation = useAppStore((s) => s.setMinimapLocation);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
-  const setSuppressUnassigned = useAppStore((s) => s.setSuppressUnassignedExportWarningDialog);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
   const setSuppressDeleteAnnotation = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteImage = useAppStore((s) => s.setSuppressDeleteImageWarningDialog);
@@ -277,14 +275,6 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
 
           <section>
             <h4>Notifications</h4>
-            <label className="inline-check">
-              <input
-                type="checkbox"
-                checked={suppressUnassignedWarning}
-                onChange={(e) => setSuppressUnassigned(e.target.checked)}
-              />
-              <span>Suppress unassigned export warning</span>
-            </label>
             <label className="inline-check">
               <input
                 type="checkbox"

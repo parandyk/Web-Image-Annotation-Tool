@@ -37,10 +37,14 @@ type VideoInputDraft = {
 
 type WorkspaceClassOperationDialog =
   | null
-  | { type: 'swap'; selectedClassIds: string[]; targetClassId: string; search: string }
-  | { type: 'remove'; selectedClassIds: string[]; search: string }
-  | { type: 'anchoring'; selectedClassIds: string[]; search: string; value: 'anchor' | 'unanchor' }
-  | { type: 'visibility'; selectedClassIds: string[]; search: string; value: 'show' | 'hide' };
+  | { type: 'swap'; selectedClassIds: string[]; targetClassId: string; search: string; scope: ImageScope }
+  | { type: 'remove'; selectedClassIds: string[]; search: string; scope: ImageScope }
+  | { type: 'anchoring'; selectedClassIds: string[]; search: string; value: 'anchor' | 'unanchor'; scope: ImageScope }
+  | { type: 'visibility'; selectedClassIds: string[]; search: string; value: 'show' | 'hide'; scope: ImageScope };
+
+type AnnotationScopeDialog =
+  | null
+  | { type: 'removeLast' | 'removeAll' | 'visibility' | 'anchoring'; scope: ImageScope };
 
 type ExportImageNamingMode = 'original' | 'sequential';
 
@@ -49,6 +53,7 @@ type ExportRequest =
       kind: 'single';
       format: 'yolo' | 'coco' | 'voc';
       scope: ImageScope;
+      includeUnassigned: boolean;
       namingMode: ExportImageNamingMode;
       namingBase: string;
       convertImages: boolean;
@@ -61,6 +66,7 @@ type ExportRequest =
       kind: 'allFormats';
       scope: ImageScope;
       folderName: string;
+      includeUnassigned: boolean;
       namingMode: ExportImageNamingMode;
       namingBase: string;
       convertImages: boolean;
@@ -130,6 +136,7 @@ export function TopBar(): JSX.Element {
   const [videoInputDraft, setVideoInputDraft] = useState<VideoInputDraft | null>(null);
   const [videoImportBusy, setVideoImportBusy] = useState(false);
   const [workspaceClassDialog, setWorkspaceClassDialog] = useState<WorkspaceClassOperationDialog>(null);
+  const [annotationScopeDialog, setAnnotationScopeDialog] = useState<AnnotationScopeDialog>(null);
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const buttonRefs = useRef<Record<MenuId, HTMLButtonElement | null>>({
     open: null,
@@ -185,7 +192,6 @@ export function TopBar(): JSX.Element {
   const showMinimap = useAppStore((s) => s.showMinimap);
   const minimapLocation = useAppStore((s) => s.minimapLocation);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
-  const suppressUnassigned = useAppStore((s) => s.suppressUnassignedExportWarningDialog);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
   const suppressDeleteAnn = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const suppressDeleteImage = useAppStore((s) => s.suppressDeleteImageWarningDialog);
@@ -203,7 +209,6 @@ export function TopBar(): JSX.Element {
   const setShowMinimap = useAppStore((s) => s.setShowMinimap);
   const setMinimapLocation = useAppStore((s) => s.setMinimapLocation);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
-  const setSuppressUnassigned = useAppStore((s) => s.setSuppressUnassignedExportWarningDialog);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
   const setSuppressDeleteAnn = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteImage = useAppStore((s) => s.setSuppressDeleteImageWarningDialog);
@@ -258,6 +263,21 @@ export function TopBar(): JSX.Element {
       (img) => img.isBookmarked && img.annotations.some((ann) => sourceSet.has(ann.classId))
     );
   }, [images, workspaceClassDialog]);
+
+  const hasAnnotationsForScope = (scope: ImageScope): boolean => {
+    if (scope === 'currentImage') return hasCurrentImageAnnotations;
+    if (scope === 'bookmarkedImages') return hasBookmarkedAnnotations;
+    return hasGlobalAnnotations;
+  };
+
+  const canRunWorkspaceClassOperationForScope = (scope: ImageScope): boolean => {
+    if (!workspaceClassDialog) return false;
+    if (workspaceClassDialog.selectedClassIds.length === 0) return false;
+    if (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget) return false;
+    if (scope === 'currentImage') return hasSelectedImageForClassOps && hasSelectedImageClassInstances;
+    if (scope === 'bookmarkedImages') return hasBookmarkedClassInstances;
+    return hasGlobalClassInstances;
+  };
 
   const onToggleCurrentImageVisibility = (): void => {
     if (currentImageAnnotations.length === 0) return;
@@ -376,7 +396,6 @@ export function TopBar(): JSX.Element {
     showMinimap,
     minimapLocation,
     dragDeadzonePx,
-    suppressUnassigned,
     exportIncludeUnassigned,
     suppressDeleteAnn,
     suppressDeleteImage,
@@ -403,7 +422,6 @@ export function TopBar(): JSX.Element {
         | 'sidebar'
     );
     setDragDeadzonePx(Number(snap.dragDeadzonePx));
-    setSuppressUnassigned(Boolean(snap.suppressUnassigned));
     setExportIncludeUnassigned(Boolean(snap.exportIncludeUnassigned));
     setSuppressDeleteAnn(Boolean(snap.suppressDeleteAnn));
     setSuppressDeleteImage(Boolean(snap.suppressDeleteImage));
@@ -440,6 +458,55 @@ export function TopBar(): JSX.Element {
     return images;
   };
 
+  const getExportPreviewStats = (
+    request: Pick<ExportRequest, 'scope' | 'includeUnassigned' | 'includeImagesWithoutAnnotations'>
+  ): {
+    openTotal: number;
+    scopeTotal: number;
+    mappedAnnotatedInScope: number;
+    willExport: number;
+  } => {
+    const openTotal = images.length;
+    const scopedImages = getImagesForScope(request.scope).filter((img) => IMAGE_FILE_RE.test(img.name.toLowerCase()));
+    const scopeTotal = scopedImages.length;
+
+    let exportClasses = classes.filter((cls) => request.includeUnassigned || !cls.isDefault);
+    if (exportClasses.length === 0) {
+      return { openTotal, scopeTotal, mappedAnnotatedInScope: 0, willExport: 0 };
+    }
+
+    let classIdSet = new Set(exportClasses.map((cls) => cls.id));
+    const hasAnyScopeAnnotation = scopedImages.some((img) => img.annotations.length > 0);
+    const hasMappedAnnotation = scopedImages.some((img) =>
+      img.annotations.some((ann) => classIdSet.has(ann.classId))
+    );
+    if (hasAnyScopeAnnotation && !hasMappedAnnotation) {
+      exportClasses = classes;
+      classIdSet = new Set(exportClasses.map((cls) => cls.id));
+    }
+
+    const mappedAnnotatedInScope = scopedImages.filter((img) =>
+      img.annotations.some((ann) => classIdSet.has(ann.classId))
+    ).length;
+    const willExport = request.includeImagesWithoutAnnotations ? scopeTotal : mappedAnnotatedInScope;
+    return {
+      openTotal,
+      scopeTotal,
+      mappedAnnotatedInScope,
+      willExport,
+    };
+  };
+
+  const exportDialogStats = useMemo(() => {
+    if (!exportDialog) return null;
+    return getExportPreviewStats(exportDialog);
+  }, [classes, exportDialog, images, selectedImage]);
+
+  const pendingExportStats = useMemo(() => {
+    if (!pendingExport) return null;
+    return getExportPreviewStats(pendingExport);
+  }, [classes, images, pendingExport, selectedImage]);
+
   const sequentialNamingPreview = useMemo(() => {
     if (!exportDialog || exportDialog.namingMode !== 'sequential') return '';
     const base = sanitizeExportImageBaseNamePreview(exportDialog.namingBase);
@@ -448,10 +515,7 @@ export function TopBar(): JSX.Element {
     return `${base}_1${ext}`;
   }, [exportDialog, images, selectedImage]);
 
-  const executeExportRequest = async (
-    request: ExportRequest,
-    includeFallback: boolean
-  ): Promise<void> => {
+  const executeExportRequest = async (request: ExportRequest): Promise<void> => {
     const naming = {
       mode: request.namingMode,
       baseName: request.namingBase,
@@ -468,7 +532,7 @@ export function TopBar(): JSX.Element {
       await exportAnnotations(
         request.format,
         request.scope,
-        includeFallback,
+        request.includeUnassigned,
         naming,
         output,
         request.includeImagesWithoutAnnotations,
@@ -479,7 +543,7 @@ export function TopBar(): JSX.Element {
     await exportAllAnnotations(
       request.scope,
       request.folderName,
-      includeFallback,
+      request.includeUnassigned,
       naming,
       output,
       request.includeImagesWithoutAnnotations,
@@ -498,6 +562,7 @@ export function TopBar(): JSX.Element {
       kind: 'single',
       format,
       scope: defaultExportScope(),
+      includeUnassigned: exportIncludeUnassigned,
       namingMode: 'sequential',
       namingBase: 'image',
       convertImages: false,
@@ -514,6 +579,7 @@ export function TopBar(): JSX.Element {
       kind: 'allFormats',
       scope: defaultExportScope(),
       folderName: 'annotation_exports',
+      includeUnassigned: exportIncludeUnassigned,
       namingMode: 'sequential',
       namingBase: 'image',
       convertImages: false,
@@ -537,11 +603,6 @@ export function TopBar(): JSX.Element {
     }
     const request = exportDialog;
     setExportDialog(null);
-    // Unassigned-class warning can be bypassed globally via settings.
-    if (suppressUnassigned) {
-      await executeExportRequest(request, exportIncludeUnassigned);
-      return;
-    }
     setPendingExport(request);
   };
 
@@ -644,6 +705,7 @@ export function TopBar(): JSX.Element {
       selectedClassIds: [],
       targetClassId: firstClassId,
       search: '',
+      scope: selectedImage ? 'currentImage' : hasBookmarkedImages ? 'bookmarkedImages' : 'allImages',
     });
     closeMenus();
   };
@@ -653,6 +715,7 @@ export function TopBar(): JSX.Element {
       type: 'remove',
       selectedClassIds: [],
       search: '',
+      scope: selectedImage ? 'currentImage' : hasBookmarkedImages ? 'bookmarkedImages' : 'allImages',
     });
     closeMenus();
   };
@@ -663,6 +726,7 @@ export function TopBar(): JSX.Element {
       selectedClassIds: [],
       search: '',
       value: 'anchor',
+      scope: selectedImage ? 'currentImage' : hasBookmarkedImages ? 'bookmarkedImages' : 'allImages',
     });
     closeMenus();
   };
@@ -673,8 +737,56 @@ export function TopBar(): JSX.Element {
       selectedClassIds: [],
       search: '',
       value: 'show',
+      scope: selectedImage ? 'currentImage' : hasBookmarkedImages ? 'bookmarkedImages' : 'allImages',
     });
     closeMenus();
+  };
+
+  const openAnnotationScopeDialog = (
+    type: NonNullable<AnnotationScopeDialog>['type']
+  ): void => {
+    const scope =
+      type === 'removeLast'
+        ? 'currentImage'
+        : selectedImage
+          ? 'currentImage'
+          : hasBookmarkedImages
+            ? 'bookmarkedImages'
+            : 'allImages';
+    setAnnotationScopeDialog({ type, scope });
+    closeMenus();
+  };
+
+  const runAnnotationScopeOperation = async (): Promise<void> => {
+    if (!annotationScopeDialog) return;
+    const scope = annotationScopeDialog.scope;
+    if (annotationScopeDialog.type === 'removeLast') {
+      if (scope !== 'currentImage') {
+        setStatusText('Remove last annotation is available only for current image.');
+        return;
+      }
+      await removeLastBBox();
+      setAnnotationScopeDialog(null);
+      return;
+    }
+    if (annotationScopeDialog.type === 'removeAll') {
+      if (scope === 'currentImage') await removeAllBBoxes();
+      else if (scope === 'bookmarkedImages') await removeAllBBoxesBookmarked();
+      else await removeAllBBoxesGlobal();
+      setAnnotationScopeDialog(null);
+      return;
+    }
+    if (annotationScopeDialog.type === 'visibility') {
+      if (scope === 'currentImage') onToggleCurrentImageVisibility();
+      else if (scope === 'bookmarkedImages') await toggleAllVisibilityBookmarked();
+      else await toggleAllVisibilityGlobal();
+      setAnnotationScopeDialog(null);
+      return;
+    }
+    if (scope === 'currentImage') await toggleAllAnchoringCurrentImage();
+    else if (scope === 'bookmarkedImages') await toggleAllAnchoringBookmarked();
+    else await toggleAllAnchoringGlobal();
+    setAnnotationScopeDialog(null);
   };
 
   const toggleWorkspaceDialogClass = (classId: string): void => {
@@ -777,8 +889,9 @@ export function TopBar(): JSX.Element {
     setWorkspaceClassDialog(null);
   };
 
-  const runWorkspaceClassOperation = (scope: 'currentImage' | 'bookmarkedImages' | 'allImages'): void => {
+  const runWorkspaceClassOperation = (): void => {
     if (!workspaceClassDialog) return;
+    const scope = workspaceClassDialog.scope;
     if (workspaceClassDialog.type === 'swap') {
       runSwapInstances(scope);
       return;
@@ -855,6 +968,12 @@ export function TopBar(): JSX.Element {
         return;
       }
 
+      if (annotationScopeDialog) {
+        e.preventDefault();
+        setAnnotationScopeDialog(null);
+        return;
+      }
+
       if (exportDialog) {
         e.preventDefault();
         setExportDialog(null);
@@ -891,17 +1010,32 @@ export function TopBar(): JSX.Element {
     settingsOpen,
     videoImportBusy,
     videoImportDialog,
+    annotationScopeDialog,
     workspaceClassDialog,
   ]);
 
   useEffect(() => {
-    if (!settingsOpen && !videoImportDialog && !workspaceClassDialog && !exportDialog && !pendingExport) return;
+    if (
+      !settingsOpen &&
+      !videoImportDialog &&
+      !workspaceClassDialog &&
+      !annotationScopeDialog &&
+      !exportDialog &&
+      !pendingExport
+    ) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [settingsOpen, videoImportDialog, workspaceClassDialog, exportDialog, pendingExport]);
+  }, [
+    settingsOpen,
+    videoImportDialog,
+    workspaceClassDialog,
+    annotationScopeDialog,
+    exportDialog,
+    pendingExport,
+  ]);
 
   useEffect(() => {
     if (!videoImportDialog) {
@@ -936,7 +1070,7 @@ export function TopBar(): JSX.Element {
   useEffect(() => {
     if (!statusText) return;
     // Status text is transient feedback; auto-clear to avoid stale warnings.
-    const id = window.setTimeout(() => setStatusText(null), 2600);
+    const id = window.setTimeout(() => setStatusText(null), 7600);
     return () => window.clearTimeout(id);
   }, [setStatusText, statusText]);
 
@@ -1011,41 +1145,21 @@ export function TopBar(): JSX.Element {
               <div ref={(el) => (popoverRefs.current.edit = el)} className="menu-popover">
                 <button onClick={() => runAndClose(async () => undo())}>Undo</button>
                 <button onClick={() => runAndClose(async () => redo())}>Redo</button>
-                <div className="menu-group-label menu-group-label-separator">Current image</div>
-                <button onClick={() => runAndClose(async () => removeLastBBox())} disabled={!hasCurrentImageAnnotations}>
-                  Remove last annotation
+                <div className="menu-group-label menu-group-label-separator">Annotations</div>
+                <button onClick={() => openAnnotationScopeDialog('removeLast')} disabled={!hasCurrentImageAnnotations}>
+                  Remove last annotation (current image)
                 </button>
-                <button onClick={() => runAndClose(async () => removeAllBBoxes())} disabled={!hasCurrentImageAnnotations}>
+                <button onClick={() => openAnnotationScopeDialog('removeAll')} disabled={!hasGlobalAnnotations}>
                   Remove all annotations
                 </button>
-                <button onClick={() => runAndClose(async () => onToggleCurrentImageVisibility())} disabled={!hasCurrentImageAnnotations}>
+                <button onClick={() => openAnnotationScopeDialog('visibility')} disabled={!hasGlobalAnnotations}>
                   Toggle visibility
                 </button>
-                <button onClick={() => runAndClose(async () => toggleAllAnchoringCurrentImage())} disabled={!hasCurrentImageAnnotations}>
+                <button onClick={() => openAnnotationScopeDialog('anchoring')} disabled={!hasGlobalAnnotations}>
                   Toggle anchoring
                 </button>
 
-                <div className="menu-group-label menu-group-label-separator">Global</div>
-                <button onClick={() => runAndClose(async () => removeAllBBoxesGlobal())} disabled={!hasGlobalAnnotations}>
-                  Remove all annotations (global)
-                </button>
-                <button onClick={() => runAndClose(async () => removeAllBBoxesBookmarked())} disabled={!hasBookmarkedAnnotations}>
-                  Remove all annotations (bookmarked)
-                </button>
-                <button onClick={() => runAndClose(async () => toggleAllVisibilityGlobal())} disabled={!hasGlobalAnnotations}>
-                  Toggle visibility (global)
-                </button>
-                <button onClick={() => runAndClose(async () => toggleAllVisibilityBookmarked())} disabled={!hasBookmarkedAnnotations}>
-                  Toggle visibility (bookmarked)
-                </button>
-                <button onClick={() => runAndClose(async () => toggleAllAnchoringGlobal())} disabled={!hasGlobalAnnotations}>
-                  Toggle anchoring (global)
-                </button>
-                <button onClick={() => runAndClose(async () => toggleAllAnchoringBookmarked())} disabled={!hasBookmarkedAnnotations}>
-                  Toggle anchoring (bookmarked)
-                </button>
-
-                <div className="menu-group-label menu-group-label-separator">Workspace</div>
+                <div className="menu-group-label menu-group-label-separator">Classes</div>
                 <button onClick={openSwapInstancesDialog} disabled={!hasGlobalAnnotations}>
                   Swap instances of classes
                 </button>
@@ -1058,6 +1172,8 @@ export function TopBar(): JSX.Element {
                 <button onClick={openVisibilityInstancesDialog} disabled={!hasGlobalAnnotations}>
                   Set visibility for class instances
                 </button>
+
+                <div className="menu-group-label menu-group-label-separator">Workspace</div>
                 <button onClick={() => runAndClose(async () => closeAllImages())} disabled={!hasImages}>
                   Close all images
                 </button>
@@ -1110,7 +1226,6 @@ export function TopBar(): JSX.Element {
                   setDrawBoxBorder(true);
                   setShowCrosshair(true);
                   setDragDeadzonePx(4);
-                  setSuppressUnassigned(false);
                   setExportIncludeUnassigned(false);
                   setSuppressDeleteAnn(false);
                   setSuppressDeleteImage(false);
@@ -1318,6 +1433,76 @@ export function TopBar(): JSX.Element {
           </div>
         </div>
       )}
+      {annotationScopeDialog && (
+        <div className="modal-backdrop" onClick={() => setAnnotationScopeDialog(null)}>
+          <div className="modal-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-stack">
+              <section>
+                <h4>
+                  {annotationScopeDialog.type === 'removeLast'
+                    ? 'Remove last annotation'
+                    : annotationScopeDialog.type === 'removeAll'
+                      ? 'Remove all annotations'
+                      : annotationScopeDialog.type === 'visibility'
+                        ? 'Toggle visibility'
+                        : 'Toggle anchoring'}
+                </h4>
+                <p>
+                  {annotationScopeDialog.type === 'removeLast'
+                    ? 'Choose scope of this operation. Remove last is available only for current image.'
+                    : 'Choose scope of this operation.'}
+                </p>
+                <div className="row">
+                  <button
+                    className={annotationScopeDialog.scope === 'currentImage' ? 'active' : ''}
+                    onClick={() =>
+                      setAnnotationScopeDialog((prev) => (prev ? { ...prev, scope: 'currentImage' } : prev))
+                    }
+                    disabled={!hasCurrentImageAnnotations}
+                  >
+                    Current image
+                  </button>
+                  <button
+                    className={annotationScopeDialog.scope === 'bookmarkedImages' ? 'active' : ''}
+                    onClick={() =>
+                      setAnnotationScopeDialog((prev) =>
+                        prev && prev.type !== 'removeLast' ? { ...prev, scope: 'bookmarkedImages' } : prev
+                      )
+                    }
+                    disabled={annotationScopeDialog.type === 'removeLast' || !hasBookmarkedAnnotations}
+                  >
+                    Bookmarked images
+                  </button>
+                  <button
+                    className={annotationScopeDialog.scope === 'allImages' ? 'active' : ''}
+                    onClick={() =>
+                      setAnnotationScopeDialog((prev) =>
+                        prev && prev.type !== 'removeLast' ? { ...prev, scope: 'allImages' } : prev
+                      )
+                    }
+                    disabled={annotationScopeDialog.type === 'removeLast' || !hasGlobalAnnotations}
+                  >
+                    All images
+                  </button>
+                </div>
+                <div className="row dialog-actions">
+                  <button onClick={() => setAnnotationScopeDialog(null)}>Cancel</button>
+                  <button
+                    onClick={() => void runAnnotationScopeOperation()}
+                    disabled={
+                      annotationScopeDialog.type === 'removeLast'
+                        ? !hasCurrentImageAnnotations
+                        : !hasAnnotationsForScope(annotationScopeDialog.scope)
+                    }
+                  >
+                    Continue
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
       {workspaceClassDialog && (
         <div className="modal-backdrop" onClick={() => setWorkspaceClassDialog(null)}>
           <div className="modal-card workspace-class-op-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -1341,6 +1526,35 @@ export function TopBar(): JSX.Element {
                         ? 'Select classes and choose whether their instances should be anchored or unanchored.'
                         : 'Select classes and choose whether their instances should be shown or hidden.'}
                 </p>
+                <div className="row">
+                  <button
+                    className={workspaceClassDialog.scope === 'currentImage' ? 'active' : ''}
+                    onClick={() =>
+                      setWorkspaceClassDialog((prev) => (prev ? { ...prev, scope: 'currentImage' } : prev))
+                    }
+                    disabled={!hasSelectedImageForClassOps}
+                  >
+                    Current image
+                  </button>
+                  <button
+                    className={workspaceClassDialog.scope === 'bookmarkedImages' ? 'active' : ''}
+                    onClick={() =>
+                      setWorkspaceClassDialog((prev) => (prev ? { ...prev, scope: 'bookmarkedImages' } : prev))
+                    }
+                    disabled={!hasBookmarkedImages}
+                  >
+                    Bookmarked images
+                  </button>
+                  <button
+                    className={workspaceClassDialog.scope === 'allImages' ? 'active' : ''}
+                    onClick={() =>
+                      setWorkspaceClassDialog((prev) => (prev ? { ...prev, scope: 'allImages' } : prev))
+                    }
+                    disabled={!hasImages}
+                  >
+                    All images
+                  </button>
+                </div>
                 <label>
                   Search classes
                   <input
@@ -1473,35 +1687,10 @@ export function TopBar(): JSX.Element {
                 <div className="row dialog-actions">
                   <button onClick={() => setWorkspaceClassDialog(null)}>Cancel</button>
                   <button
-                    onClick={() => runWorkspaceClassOperation('currentImage')}
-                    disabled={
-                      !hasSelectedImageForClassOps ||
-                      !hasSelectedImageClassInstances ||
-                      workspaceClassDialog.selectedClassIds.length === 0 ||
-                      (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget)
-                    }
+                    onClick={() => runWorkspaceClassOperation()}
+                    disabled={!canRunWorkspaceClassOperationForScope(workspaceClassDialog.scope)}
                   >
-                    Apply selected image
-                  </button>
-                  <button
-                    onClick={() => runWorkspaceClassOperation('bookmarkedImages')}
-                    disabled={
-                      !hasBookmarkedClassInstances ||
-                      workspaceClassDialog.selectedClassIds.length === 0 ||
-                      (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget)
-                    }
-                  >
-                    Apply bookmarked images
-                  </button>
-                  <button
-                    onClick={() => runWorkspaceClassOperation('allImages')}
-                    disabled={
-                      !hasGlobalClassInstances ||
-                      workspaceClassDialog.selectedClassIds.length === 0 ||
-                      (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget)
-                    }
-                  >
-                    Apply all images
+                    Continue
                   </button>
                 </div>
               </section>
@@ -1627,6 +1816,18 @@ export function TopBar(): JSX.Element {
                 <label className="inline-check">
                   <input
                     type="checkbox"
+                    checked={exportDialog.includeUnassigned}
+                    onChange={(e) => {
+                      const nextValue = e.target.checked;
+                      setExportDialog((prev) => (prev ? { ...prev, includeUnassigned: nextValue } : prev));
+                      setExportIncludeUnassigned(nextValue);
+                    }}
+                  />
+                  <span>Export unassigned class</span>
+                </label>
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
                     checked={exportDialog.includeImagesWithoutAnnotations}
                     onChange={(e) =>
                       setExportDialog((prev) =>
@@ -1634,7 +1835,14 @@ export function TopBar(): JSX.Element {
                       )
                     }
                   />
-                  <span>Include images without annotations</span>
+                  <span className="inline-check-body export-count-body">
+                    <span>Include images without annotations</span>
+                    <span className="inline-check-meta export-count-meta">
+                      {exportDialogStats
+                        ? `${exportDialogStats.willExport}/${exportDialogStats.openTotal} open images will be exported (${exportDialogStats.mappedAnnotatedInScope}/${exportDialogStats.scopeTotal} in scope have selected classes)`
+                        : 'No images available'}
+                    </span>
+                  </span>
                 </label>
                 <label className="inline-check">
                   <input
@@ -1682,7 +1890,7 @@ export function TopBar(): JSX.Element {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="panel-stack">
               <section>
-                <h4>Export warning</h4>
+                <h4>Export summary</h4>
                 <div className="export-warning-list" role="list">
                   <div className="export-warning-row" role="listitem">
                     <span className="export-warning-key">Format</span>
@@ -1733,6 +1941,22 @@ export function TopBar(): JSX.Element {
                     </span>
                   </div>
                   <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Images to export</span>
+                    <span className="export-warning-value">
+                      {pendingExportStats
+                        ? `${pendingExportStats.willExport}/${pendingExportStats.openTotal}`
+                        : `0/${images.length}`}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Class-mapped images in scope</span>
+                    <span className="export-warning-value">
+                      {pendingExportStats
+                        ? `${pendingExportStats.mappedAnnotatedInScope}/${pendingExportStats.scopeTotal}`
+                        : '0/0'}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
                     <span className="export-warning-key">Original name metadata</span>
                     <span className="export-warning-value">
                       {pendingExport.includeOriginalNameMetadata ? 'Included' : 'Not included'}
@@ -1747,27 +1971,23 @@ export function TopBar(): JSX.Element {
                   <div className="export-warning-row" role="listitem">
                     <span className="export-warning-key">Unassigned class export</span>
                     <span className="export-warning-value">
-                      {exportIncludeUnassigned ? 'Will be exported' : 'Will not be exported'}
+                      {pendingExport.includeUnassigned ? 'Will be exported' : 'Will not be exported'}
                     </span>
                   </div>
                 </div>
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={exportIncludeUnassigned}
-                    onChange={(e) => setExportIncludeUnassigned(e.target.checked)}
-                  />
-                  <span>Export unassigned class</span>
-                </label>
-                <label className="inline-check">
-                  <input type="checkbox" checked={suppressUnassigned} onChange={(e) => setSuppressUnassigned(e.target.checked)} />
-                  <span>Don't ask again</span>
-                </label>
                 <div className="row dialog-actions">
                   <button onClick={() => setPendingExport(null)}>Cancel</button>
                   <button
+                    onClick={() => {
+                      setExportDialog(pendingExport);
+                      setPendingExport(null);
+                    }}
+                  >
+                    Back
+                  </button>
+                  <button
                     onClick={async () => {
-                      await executeExportRequest(pendingExport, exportIncludeUnassigned);
+                      await executeExportRequest(pendingExport);
                       setPendingExport(null);
                     }}
                   >

@@ -10,6 +10,10 @@ const MIN_ZOOM_ABSOLUTE = 0.02;
 const MAX_ZOOM_ABSOLUTE = 64;
 const MIN_ZOOM_FIT_MULTIPLIER = 0.1;
 const MAX_ZOOM_FIT_MULTIPLIER = 10;
+const MIN_LABEL_SCREEN_WIDTH_PX = 56;
+const MIN_LABEL_SCREEN_HEIGHT_PX = 16;
+const MIN_ANCHOR_SCREEN_WIDTH_PX = 18;
+const MIN_ANCHOR_SCREEN_HEIGHT_PX = 12;
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -1193,6 +1197,11 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
               const anchorX = ann.bbox.x + anchorPad;
               const anchorY = Math.max(0, ann.bbox.y + ann.bbox.height - anchorPad - anchorFontSize);
               const anchorWidth = Math.max(1, ann.bbox.width - anchorPad * 2);
+              const annScreenWidth = ann.bbox.width * viewScale;
+              const annScreenHeight = ann.bbox.height * viewScale;
+              const canShowAnchor =
+                annScreenWidth >= MIN_ANCHOR_SCREEN_WIDTH_PX &&
+                annScreenHeight >= MIN_ANCHOR_SCREEN_HEIGHT_PX;
 
               return (
                 <Group key={`ann_${ann.id}`}>
@@ -1439,7 +1448,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       listening={false}
                     />
                   ) : null}
-                  {ann.isAnchored ? (
+                  {ann.isAnchored && canShowAnchor ? (
                     <Text
                       ref={(node) => {
                         anchorRefs.current[ann.id] = node;
@@ -1449,6 +1458,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                       width={anchorWidth}
                       align="right"
                       text="[A]"
+                      wrap="none"
                       fill={cls.color}
                       fontStyle="bold"
                       fontSize={anchorFontSize}
@@ -1463,6 +1473,16 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
               visibleAnnotations.map((ann) => {
                 const cls = classById.get(ann.classId);
                 if (!cls) return null;
+                const isSelected = selectedIdsForImage.includes(ann.id);
+                const annScreenWidth = ann.bbox.width * viewScale;
+                const annScreenHeight = ann.bbox.height * viewScale;
+                if (
+                  !isSelected &&
+                  (annScreenWidth < MIN_LABEL_SCREEN_WIDTH_PX ||
+                    annScreenHeight < MIN_LABEL_SCREEN_HEIGHT_PX)
+                ) {
+                  return null;
+                }
 
                 return (
                   <Text

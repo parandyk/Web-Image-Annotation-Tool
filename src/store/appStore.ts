@@ -1839,6 +1839,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       workingClasses.some((c) => c.id === state.selectedClassId) && state.selectedClassId
         ? state.selectedClassId
         : fallbackClassId;
+    const importedImageWord = newImages.length === 1 ? 'image' : 'images';
+    const importedAnnotationWord = importedAnnotationCount === 1 ? 'annotation' : 'annotations';
+    const skippedPart = skippedAnnotations > 0 ? `, ${skippedAnnotations} skipped` : '';
 
     set((s) => ({
       classes: workingClasses,
@@ -1850,7 +1853,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       nextDisplayIdByClass,
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
-      statusText: `Imported ${format.toUpperCase()} dataset: ${newImages.length} images, ${importedAnnotationCount} annotations${skippedAnnotations > 0 ? `, ${skippedAnnotations} skipped` : ''}.`,
+      statusText: `Imported ${format.toUpperCase()} dataset: ${newImages.length} ${importedImageWord}, ${importedAnnotationCount} ${importedAnnotationWord}${skippedPart}.`,
     }));
   },
 
