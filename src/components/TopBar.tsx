@@ -44,7 +44,7 @@ type WorkspaceClassOperationDialog =
 
 type AnnotationScopeDialog =
   | null
-  | { type: 'removeLast' | 'removeAll' | 'visibility' | 'anchoring'; scope: ImageScope };
+  | { type: 'removeAll' | 'visibility' | 'anchoring'; scope: ImageScope; visibilityValue?: 'show' | 'hide' };
 
 type ExportImageNamingMode = 'original' | 'sequential';
 
@@ -171,8 +171,6 @@ export function TopBar(): JSX.Element {
   const toggleAllAnchoringGlobal = useAppStore((s) => s.toggleAllAnchoringGlobal);
   const toggleAllAnchoringBookmarked = useAppStore((s) => s.toggleAllAnchoringBookmarked);
   const setAllVisibilityCurrentImage = useAppStore((s) => s.setAllVisibilityCurrentImage);
-  const toggleAllVisibilityGlobal = useAppStore((s) => s.toggleAllVisibilityGlobal);
-  const toggleAllVisibilityBookmarked = useAppStore((s) => s.toggleAllVisibilityBookmarked);
   const swapClassInstances = useAppStore((s) => s.swapClassInstances);
   const removeClassInstances = useAppStore((s) => s.removeClassInstances);
   const setClassInstancesAnchoring = useAppStore((s) => s.setClassInstancesAnchoring);
@@ -277,12 +275,6 @@ export function TopBar(): JSX.Element {
     if (scope === 'currentImage') return hasSelectedImageForClassOps && hasSelectedImageClassInstances;
     if (scope === 'bookmarkedImages') return hasBookmarkedClassInstances;
     return hasGlobalClassInstances;
-  };
-
-  const onToggleCurrentImageVisibility = (): void => {
-    if (currentImageAnnotations.length === 0) return;
-    const nextVisible = currentImageAnnotations.some((ann) => !ann.isVisible);
-    setAllVisibilityCurrentImage(nextVisible);
   };
 
   const sourceFrameCount = useMemo(() => {
@@ -745,30 +737,18 @@ export function TopBar(): JSX.Element {
   const openAnnotationScopeDialog = (
     type: NonNullable<AnnotationScopeDialog>['type']
   ): void => {
-    const scope =
-      type === 'removeLast'
-        ? 'currentImage'
-        : selectedImage
-          ? 'currentImage'
-          : hasBookmarkedImages
-            ? 'bookmarkedImages'
-            : 'allImages';
-    setAnnotationScopeDialog({ type, scope });
+    const scope = selectedImage ? 'currentImage' : hasBookmarkedImages ? 'bookmarkedImages' : 'allImages';
+    setAnnotationScopeDialog({
+      type,
+      scope,
+      ...(type === 'visibility' ? { visibilityValue: 'show' as const } : {}),
+    });
     closeMenus();
   };
 
   const runAnnotationScopeOperation = async (): Promise<void> => {
     if (!annotationScopeDialog) return;
     const scope = annotationScopeDialog.scope;
-    if (annotationScopeDialog.type === 'removeLast') {
-      if (scope !== 'currentImage') {
-        setStatusText('Remove last annotation is available only for current image.');
-        return;
-      }
-      await removeLastBBox();
-      setAnnotationScopeDialog(null);
-      return;
-    }
     if (annotationScopeDialog.type === 'removeAll') {
       if (scope === 'currentImage') await removeAllBBoxes();
       else if (scope === 'bookmarkedImages') await removeAllBBoxesBookmarked();
@@ -777,9 +757,12 @@ export function TopBar(): JSX.Element {
       return;
     }
     if (annotationScopeDialog.type === 'visibility') {
-      if (scope === 'currentImage') onToggleCurrentImageVisibility();
-      else if (scope === 'bookmarkedImages') await toggleAllVisibilityBookmarked();
-      else await toggleAllVisibilityGlobal();
+      const visible = annotationScopeDialog.visibilityValue !== 'hide';
+      if (scope === 'currentImage') {
+        setAllVisibilityCurrentImage(visible);
+      } else {
+        setClassInstancesVisibility(classes.map((cls) => cls.id), visible, scope);
+      }
       setAnnotationScopeDialog(null);
       return;
     }
@@ -1146,7 +1129,7 @@ export function TopBar(): JSX.Element {
                 <button onClick={() => runAndClose(async () => undo())}>Undo</button>
                 <button onClick={() => runAndClose(async () => redo())}>Redo</button>
                 <div className="menu-group-label menu-group-label-separator">Annotations</div>
-                <button onClick={() => openAnnotationScopeDialog('removeLast')} disabled={!hasCurrentImageAnnotations}>
+                <button onClick={() => runAndClose(async () => removeLastBBox())} disabled={!hasCurrentImageAnnotations}>
                   Remove last annotation (current image)
                 </button>
                 <button onClick={() => openAnnotationScopeDialog('removeAll')} disabled={!hasGlobalAnnotations}>
@@ -1439,19 +1422,13 @@ export function TopBar(): JSX.Element {
             <div className="panel-stack">
               <section>
                 <h4>
-                  {annotationScopeDialog.type === 'removeLast'
-                    ? 'Remove last annotation'
-                    : annotationScopeDialog.type === 'removeAll'
-                      ? 'Remove all annotations'
-                      : annotationScopeDialog.type === 'visibility'
-                        ? 'Toggle visibility'
-                        : 'Toggle anchoring'}
+                  {annotationScopeDialog.type === 'removeAll'
+                    ? 'Remove all annotations'
+                    : annotationScopeDialog.type === 'visibility'
+                      ? 'Toggle visibility'
+                      : 'Toggle anchoring'}
                 </h4>
-                <p>
-                  {annotationScopeDialog.type === 'removeLast'
-                    ? 'Choose scope of this operation. Remove last is available only for current image.'
-                    : 'Choose scope of this operation.'}
-                </p>
+                <p>Choose scope of this operation.</p>
                 <div className="row">
                   <button
                     className={annotationScopeDialog.scope === 'currentImage' ? 'active' : ''}
@@ -1465,35 +1442,60 @@ export function TopBar(): JSX.Element {
                   <button
                     className={annotationScopeDialog.scope === 'bookmarkedImages' ? 'active' : ''}
                     onClick={() =>
-                      setAnnotationScopeDialog((prev) =>
-                        prev && prev.type !== 'removeLast' ? { ...prev, scope: 'bookmarkedImages' } : prev
-                      )
+                      setAnnotationScopeDialog((prev) => (prev ? { ...prev, scope: 'bookmarkedImages' } : prev))
                     }
-                    disabled={annotationScopeDialog.type === 'removeLast' || !hasBookmarkedAnnotations}
+                    disabled={!hasBookmarkedAnnotations}
                   >
                     Bookmarked images
                   </button>
                   <button
                     className={annotationScopeDialog.scope === 'allImages' ? 'active' : ''}
                     onClick={() =>
-                      setAnnotationScopeDialog((prev) =>
-                        prev && prev.type !== 'removeLast' ? { ...prev, scope: 'allImages' } : prev
-                      )
+                      setAnnotationScopeDialog((prev) => (prev ? { ...prev, scope: 'allImages' } : prev))
                     }
-                    disabled={annotationScopeDialog.type === 'removeLast' || !hasGlobalAnnotations}
+                    disabled={!hasGlobalAnnotations}
                   >
                     All images
                   </button>
                 </div>
+                {annotationScopeDialog.type === 'visibility' && (
+                  <label>
+                    Action
+                    <div className="row">
+                      <button
+                        type="button"
+                        className={annotationScopeDialog.visibilityValue !== 'hide' ? 'active' : ''}
+                        onClick={() =>
+                          setAnnotationScopeDialog((prev) =>
+                            prev && prev.type === 'visibility'
+                              ? { ...prev, visibilityValue: 'show' }
+                              : prev
+                          )
+                        }
+                      >
+                        Make visible
+                      </button>
+                      <button
+                        type="button"
+                        className={annotationScopeDialog.visibilityValue === 'hide' ? 'active' : ''}
+                        onClick={() =>
+                          setAnnotationScopeDialog((prev) =>
+                            prev && prev.type === 'visibility'
+                              ? { ...prev, visibilityValue: 'hide' }
+                              : prev
+                          )
+                        }
+                      >
+                        Make invisible
+                      </button>
+                    </div>
+                  </label>
+                )}
                 <div className="row dialog-actions">
                   <button onClick={() => setAnnotationScopeDialog(null)}>Cancel</button>
                   <button
                     onClick={() => void runAnnotationScopeOperation()}
-                    disabled={
-                      annotationScopeDialog.type === 'removeLast'
-                        ? !hasCurrentImageAnnotations
-                        : !hasAnnotationsForScope(annotationScopeDialog.scope)
-                    }
+                    disabled={!hasAnnotationsForScope(annotationScopeDialog.scope)}
                   >
                     Continue
                   </button>
