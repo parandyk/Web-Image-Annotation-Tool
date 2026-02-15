@@ -69,6 +69,15 @@ type ExportImageNamingOptions = {
   mode: ExportImageNamingMode;
   baseName?: string;
 };
+type ExportImageOutputFormat = 'jpeg' | 'png';
+type ExportImageOutputOptions = {
+  convert: boolean;
+  format: ExportImageOutputFormat;
+};
+type ExportImageMetadataOptions = {
+  includeOriginalName: boolean;
+  sanitizeImageMetadata: boolean;
+};
 
 type AppState = ViewState & {
   statusText: string | null;
@@ -191,13 +200,19 @@ type AppState = ViewState & {
     format: ExportAnnotationFormat,
     scope: ImageScope,
     includeFallback?: boolean,
-    namingOptions?: ExportImageNamingOptions
+    namingOptions?: ExportImageNamingOptions,
+    outputOptions?: ExportImageOutputOptions,
+    includeImagesWithoutAnnotations?: boolean,
+    imageMetadataOptions?: ExportImageMetadataOptions
   ) => Promise<void>;
   exportAllAnnotations: (
     scope: ImageScope,
     folderName: string,
     includeFallback?: boolean,
-    namingOptions?: ExportImageNamingOptions
+    namingOptions?: ExportImageNamingOptions,
+    outputOptions?: ExportImageOutputOptions,
+    includeImagesWithoutAnnotations?: boolean,
+    imageMetadataOptions?: ExportImageMetadataOptions
   ) => Promise<void>;
   exportWorkspaceState: () => Promise<void>;
 };
@@ -323,7 +338,11 @@ function toDirectoryEntries(files: File[]): DirectoryEntry[] {
 }
 
 function isImageEntry(entry: DirectoryEntry): boolean {
-  return IMAGE_FILE_RE.test(entry.nameLower);
+  return isSupportedImageFileName(entry.nameLower);
+}
+
+function isSupportedImageFileName(name: string): boolean {
+  return IMAGE_FILE_RE.test(name.toLowerCase());
 }
 
 async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -707,6 +726,7 @@ type ExportContext = {
   classes: ClassData[];
   classMap: Map<string, number>;
   fileNameByImageId: Map<string, string>;
+  outputOptions: ExportImageOutputOptions;
 };
 
 function sanitizeExportImageBaseName(input: string): string {
@@ -720,9 +740,62 @@ function sanitizeExportImageBaseName(input: string): string {
   return safe.length > 0 ? safe : 'image';
 }
 
+function normalizeExportImageOutputOptions(
+  options: ExportImageOutputOptions | undefined
+): ExportImageOutputOptions {
+  if (!options) return { convert: false, format: 'png' };
+  return {
+    convert: Boolean(options.convert),
+    format: options.format === 'jpeg' ? 'jpeg' : 'png',
+  };
+}
+
+function normalizeExportImageMetadataOptions(
+  options: ExportImageMetadataOptions | undefined
+): ExportImageMetadataOptions {
+  if (!options) {
+    return { includeOriginalName: false, sanitizeImageMetadata: false };
+  }
+  return {
+    includeOriginalName: Boolean(options.includeOriginalName),
+    sanitizeImageMetadata: Boolean(options.sanitizeImageMetadata),
+  };
+}
+
+function getReencodedExtensionForImage(
+  imageName: string,
+  outputOptions: ExportImageOutputOptions,
+  metadataOptions: ExportImageMetadataOptions
+): string | null {
+  if (outputOptions.convert) {
+    return outputOptions.format === 'jpeg' ? '.jpg' : '.png';
+  }
+  if (!metadataOptions.sanitizeImageMetadata) return null;
+  const ext = splitNameAndExt(imageName).ext.toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return '.jpg';
+  if (ext === '.png') return '.png';
+  // For formats without reliable same-format canvas export (webp/bmp/tiff), sanitize via PNG re-encode.
+  return '.png';
+}
+
+function getReencodedFormat(extension: string): ExportImageOutputFormat {
+  return extension === '.jpg' ? 'jpeg' : 'png';
+}
+
+function withExtension(fileName: string, ext: string): string {
+  const { stem } = splitNameAndExt(fileName);
+  return `${stem}${ext}`;
+}
+
+function getImageMetadataOriginalName(image: ImageItem): string {
+  return image.name;
+}
+
 function buildExportImageFileNameMap(
   images: ImageItem[],
-  namingOptions: ExportImageNamingOptions
+  namingOptions: ExportImageNamingOptions,
+  outputOptions: ExportImageOutputOptions,
+  metadataOptions: ExportImageMetadataOptions
 ): Map<string, string> {
   const mode = namingOptions.mode ?? 'sequential';
   const mapped = new Map<string, string>();
@@ -730,7 +803,9 @@ function buildExportImageFileNameMap(
 
   if (mode === 'original') {
     for (const image of images) {
-      const uniqueName = toUniqueName(image.name, used);
+      const convertedExt = getReencodedExtensionForImage(image.name, outputOptions, metadataOptions);
+      const sourceName = convertedExt ? withExtension(image.name, convertedExt) : image.name;
+      const uniqueName = toUniqueName(sourceName, used);
       mapped.set(image.id, uniqueName);
     }
     return mapped;
@@ -739,21 +814,96 @@ function buildExportImageFileNameMap(
   const baseName = sanitizeExportImageBaseName(namingOptions.baseName ?? 'image');
   images.forEach((image, index) => {
     const { ext } = splitNameAndExt(image.name);
+    const convertedExt = getReencodedExtensionForImage(image.name, outputOptions, metadataOptions);
+    const resolvedExt = convertedExt ?? ext;
     const raw = `${baseName}_${index + 1}${ext}`;
-    const uniqueName = toUniqueName(raw, used);
+    const candidate = withExtension(raw, resolvedExt);
+    const uniqueName = toUniqueName(candidate, used);
     mapped.set(image.id, uniqueName);
   });
   return mapped;
+}
+
+async function loadImageFromFile(file: File): Promise<HTMLImageElement> {
+  const src = URL.createObjectURL(file);
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(src);
+      resolve(image);
+    };
+    image.onerror = (error) => {
+      URL.revokeObjectURL(src);
+      reject(error);
+    };
+    image.src = src;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, mime: string, quality?: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error('Canvas conversion failed.'));
+          return;
+        }
+        resolve(blob);
+      },
+      mime,
+      quality
+    );
+  });
+}
+
+async function convertImageFileForExport(file: File, format: ExportImageOutputFormat): Promise<Blob> {
+  const image = await loadImageFromFile(file);
+  const width = Math.max(1, image.naturalWidth);
+  const height = Math.max(1, image.naturalHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas context unavailable.');
+  ctx.drawImage(image, 0, 0, width, height);
+  if (format === 'jpeg') {
+    return canvasToBlob(canvas, 'image/jpeg', 0.92);
+  }
+  return canvasToBlob(canvas, 'image/png');
+}
+
+async function prepareExportImageBlobs(
+  ctx: ExportContext,
+  metadataOptions: ExportImageMetadataOptions
+): Promise<Map<string, Blob>> {
+  const blobById = new Map<string, Blob>();
+  for (const image of ctx.images) {
+    const targetExt = getReencodedExtensionForImage(image.name, ctx.outputOptions, metadataOptions);
+    if (!targetExt) {
+      blobById.set(image.id, image.file);
+      continue;
+    }
+    const converted = await convertImageFileForExport(image.file, getReencodedFormat(targetExt));
+    blobById.set(image.id, converted);
+  }
+  return blobById;
 }
 
 function resolveExportContext(
   state: Pick<AppState, 'images' | 'selectedImageId' | 'classes'>,
   scope: ImageScope,
   includeFallback: boolean,
-  namingOptions: ExportImageNamingOptions
+  namingOptions: ExportImageNamingOptions,
+  outputOptions: ExportImageOutputOptions,
+  includeImagesWithoutAnnotations: boolean,
+  metadataOptions: ExportImageMetadataOptions
 ): ExportContext | null {
+  const normalizedOutputOptions = normalizeExportImageOutputOptions(outputOptions);
+  const normalizedMetadataOptions = normalizeExportImageMetadataOptions(metadataOptions);
   const imageIdSet = new Set(getImageIdsByScope(state.images, state.selectedImageId, scope));
-  const images = state.images.filter((img) => imageIdSet.has(img.id));
+  let images = state.images.filter(
+    (img) => imageIdSet.has(img.id) && isSupportedImageFileName(img.name)
+  );
   if (images.length === 0) return null;
 
   const hasAnyAnnotation = images.some((img) => img.annotations.length > 0);
@@ -769,11 +919,42 @@ function resolveExportContext(
     classMap = new Map(classes.map((c, idx) => [c.id, idx]));
   }
 
-  const fileNameByImageId = buildExportImageFileNameMap(images, namingOptions);
-  return { images, classes, classMap, fileNameByImageId };
+  if (!includeImagesWithoutAnnotations) {
+    images = images.filter((img) => img.annotations.some((ann) => classMap.has(ann.classId)));
+    if (images.length === 0) return null;
+  }
+
+  const fileNameByImageId = buildExportImageFileNameMap(
+    images,
+    namingOptions,
+    normalizedOutputOptions,
+    normalizedMetadataOptions
+  );
+  return { images, classes, classMap, fileNameByImageId, outputOptions: normalizedOutputOptions };
 }
 
-function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
+function writeImageMetadataSidecar(
+  root: JSZip,
+  ctx: ExportContext,
+  metadataOptions: ExportImageMetadataOptions
+): void {
+  if (!metadataOptions.includeOriginalName) return;
+  const payload = {
+    images: ctx.images.map((img, idx) => ({
+      id: idx + 1,
+      file_name: ctx.fileNameByImageId.get(img.id) ?? img.name,
+      original_file_name: getImageMetadataOriginalName(img),
+    })),
+  };
+  root.file('image_metadata.json', JSON.stringify(payload, null, 2));
+}
+
+function writeYoloDataset(
+  root: JSZip,
+  ctx: ExportContext,
+  imageBlobById: Map<string, Blob>,
+  metadataOptions: ExportImageMetadataOptions
+): void {
   const imagesFolder = root.folder('images');
   const labelsFolder = root.folder('labels');
   if (!imagesFolder || !labelsFolder) return;
@@ -783,7 +964,8 @@ function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
 
   for (const image of ctx.images) {
     const exportImageName = ctx.fileNameByImageId.get(image.id) ?? image.name;
-    imagesFolder.file(exportImageName, image.file);
+    const exportBlob = imageBlobById.get(image.id) ?? image.file;
+    imagesFolder.file(exportImageName, exportBlob);
 
     const lines = image.annotations
       .filter((a) => ctx.classMap.has(a.classId))
@@ -812,14 +994,21 @@ function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
   ].join('\n');
 
   root.file('data.yaml', yaml);
+  writeImageMetadataSidecar(root, ctx, metadataOptions);
 }
 
-function writeCocoDataset(root: JSZip, ctx: ExportContext): void {
+function writeCocoDataset(
+  root: JSZip,
+  ctx: ExportContext,
+  imageBlobById: Map<string, Blob>,
+  metadataOptions: ExportImageMetadataOptions
+): void {
   const imagesFolder = root.folder('images');
   if (!imagesFolder) return;
   for (const image of ctx.images) {
     const exportImageName = ctx.fileNameByImageId.get(image.id) ?? image.name;
-    imagesFolder.file(exportImageName, image.file);
+    const exportBlob = imageBlobById.get(image.id) ?? image.file;
+    imagesFolder.file(exportImageName, exportBlob);
   }
 
   const round = (v: number, places: number): number => {
@@ -837,12 +1026,19 @@ function writeCocoDataset(root: JSZip, ctx: ExportContext): void {
       year: new Date().getFullYear(),
       date_created: new Date().toLocaleString('sv-SE'),
     },
-    images: ctx.images.map((img, idx) => ({
-      id: idx + 1,
-      file_name: ctx.fileNameByImageId.get(img.id) ?? img.name,
-      width: img.width,
-      height: img.height,
-    })),
+    images: ctx.images.map((img, idx) => {
+      const base = {
+        id: idx + 1,
+        file_name: ctx.fileNameByImageId.get(img.id) ?? img.name,
+        width: img.width,
+        height: img.height,
+      };
+      if (!metadataOptions.includeOriginalName) return base;
+      return {
+        ...base,
+        original_file_name: getImageMetadataOriginalName(img),
+      };
+    }),
     categories,
     annotations: ctx.images.flatMap((img, idx) =>
       img.annotations
@@ -864,9 +1060,15 @@ function writeCocoDataset(root: JSZip, ctx: ExportContext): void {
   };
 
   root.file('instances_default.json', JSON.stringify(coco, null, 2));
+  writeImageMetadataSidecar(root, ctx, metadataOptions);
 }
 
-function writeVocDataset(root: JSZip, ctx: ExportContext): void {
+function writeVocDataset(
+  root: JSZip,
+  ctx: ExportContext,
+  imageBlobById: Map<string, Blob>,
+  metadataOptions: ExportImageMetadataOptions
+): void {
   const imagesFolder = root.folder('images');
   const annotationsFolder = root.folder('annotations');
   if (!imagesFolder || !annotationsFolder) return;
@@ -874,7 +1076,8 @@ function writeVocDataset(root: JSZip, ctx: ExportContext): void {
   const classById = new Map(ctx.classes.map((c) => [c.id, c]));
   for (const image of ctx.images) {
     const exportImageName = ctx.fileNameByImageId.get(image.id) ?? image.name;
-    imagesFolder.file(exportImageName, image.file);
+    const exportBlob = imageBlobById.get(image.id) ?? image.file;
+    imagesFolder.file(exportImageName, exportBlob);
     const objects = image.annotations
       .filter((ann) => classById.has(ann.classId))
       .map((ann) => ({
@@ -885,6 +1088,7 @@ function writeVocDataset(root: JSZip, ctx: ExportContext): void {
     const xmlName = exportImageName.replace(/\.[^.]+$/, '.xml');
     annotationsFolder.file(xmlName, xml);
   }
+  writeImageMetadataSidecar(root, ctx, metadataOptions);
 }
 
 function sanitizeExportFolderName(input: string): string {
@@ -1011,6 +1215,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   openImages: async (files) => {
     const current = get();
     if (files.length === 0) return;
+    const supportedFiles = files.filter((f) => isSupportedImageFileName(f.name));
+    const skippedUnsupportedCount = files.length - supportedFiles.length;
+    if (supportedFiles.length === 0) {
+      set({ statusText: 'No supported image files selected.' });
+      return;
+    }
 
     const base: Snapshot = {
       classes: current.classes,
@@ -1025,7 +1235,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const takenNames = new Set(current.images.map((i) => i.name));
     const newImages: ImageItem[] = [];
     const failedNames: string[] = [];
-    for (const file of files) {
+    for (const file of supportedFiles) {
       try {
         const dims = await getImageDimensionsWithRetry(file, 3);
         newImages.push({
@@ -1045,19 +1255,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     if (newImages.length === 0) {
-      set({
-        statusText:
-          failedNames.length === 1
-            ? `Couldn't open "${failedNames[0]}".`
-            : `Couldn't open ${failedNames.length} selected images.`,
-      });
+      const openFailure =
+        failedNames.length === 1
+          ? `Couldn't open "${failedNames[0]}".`
+          : `Couldn't open ${failedNames.length} selected images.`;
+      if (skippedUnsupportedCount > 0) {
+        set({
+          statusText: `${openFailure} Skipped ${skippedUnsupportedCount} unsupported file${skippedUnsupportedCount === 1 ? '' : 's'}.`,
+        });
+      } else {
+        set({ statusText: openFailure });
+      }
       return;
     }
 
     const partialFailureStatus =
       failedNames.length > 0
-        ? `Opened ${newImages.length}/${files.length} images. ${failedNames.length} failed to decode.`
-        : null;
+        ? `Opened ${newImages.length}/${supportedFiles.length} images. ${failedNames.length} failed to decode.`
+        : skippedUnsupportedCount > 0
+          ? `Opened ${newImages.length} images. Skipped ${skippedUnsupportedCount} unsupported file${skippedUnsupportedCount === 1 ? '' : 's'}.`
+          : null;
 
     set((state) => ({
       images: [...state.images, ...newImages],
@@ -3823,45 +4040,116 @@ export const useAppStore = create<AppState>((set, get) => ({
     downloadBlob(blob, 'classes.txt');
   },
 
-  exportAnnotations: async (format, scope, includeFallback = false, namingOptions = { mode: 'sequential', baseName: 'image' }) => {
+  exportAnnotations: async (
+    format,
+    scope,
+    includeFallback = false,
+    namingOptions = { mode: 'sequential', baseName: 'image' },
+    outputOptions = { convert: false, format: 'png' },
+    includeImagesWithoutAnnotations = true,
+    imageMetadataOptions = { includeOriginalName: false, sanitizeImageMetadata: false }
+  ) => {
     const state = get();
-    const ctx = resolveExportContext(state, scope, includeFallback, namingOptions);
-    if (!ctx) return;
+    const scopedImageIds = new Set(getImageIdsByScope(state.images, state.selectedImageId, scope));
+    const scopedImages = state.images.filter((img) => scopedImageIds.has(img.id));
+    const skippedUnsupportedCount = scopedImages.filter((img) => !isSupportedImageFileName(img.name)).length;
+    const normalizedMetadataOptions = normalizeExportImageMetadataOptions(imageMetadataOptions);
+    const ctx = resolveExportContext(
+      state,
+      scope,
+      includeFallback,
+      namingOptions,
+      outputOptions,
+      includeImagesWithoutAnnotations,
+      normalizedMetadataOptions
+    );
+    if (!ctx) {
+      if (scopedImages.length > 0 && skippedUnsupportedCount === scopedImages.length) {
+        set({ statusText: 'No exportable images in selected scope.' });
+      } else if (!includeImagesWithoutAnnotations) {
+        set({ statusText: 'No images with exportable annotations in selected scope.' });
+      }
+      return;
+    }
 
-    const zip = new JSZip();
-    if (format === 'yolo') writeYoloDataset(zip, ctx);
-    if (format === 'coco') writeCocoDataset(zip, ctx);
-    if (format === 'voc') writeVocDataset(zip, ctx);
-    const blob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(blob, `dataset_${format}_${Date.now()}.zip`);
+    try {
+      const imageBlobById = await prepareExportImageBlobs(ctx, normalizedMetadataOptions);
+      const zip = new JSZip();
+      if (format === 'yolo') writeYoloDataset(zip, ctx, imageBlobById, normalizedMetadataOptions);
+      if (format === 'coco') writeCocoDataset(zip, ctx, imageBlobById, normalizedMetadataOptions);
+      if (format === 'voc') writeVocDataset(zip, ctx, imageBlobById, normalizedMetadataOptions);
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, `dataset_${format}_${Date.now()}.zip`);
+      if (skippedUnsupportedCount > 0) {
+        set({
+          statusText: `Export completed. Skipped ${skippedUnsupportedCount} unsupported image file${skippedUnsupportedCount === 1 ? '' : 's'}.`,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown conversion error.';
+      set({ statusText: `Export failed: ${message}` });
+    }
   },
 
   exportAllAnnotations: async (
     scope,
     folderName,
     includeFallback = false,
-    namingOptions = { mode: 'sequential', baseName: 'image' }
+    namingOptions = { mode: 'sequential', baseName: 'image' },
+    outputOptions = { convert: false, format: 'png' },
+    includeImagesWithoutAnnotations = true,
+    imageMetadataOptions = { includeOriginalName: false, sanitizeImageMetadata: false }
   ) => {
     const state = get();
-    const ctx = resolveExportContext(state, scope, includeFallback, namingOptions);
-    if (!ctx) return;
+    const scopedImageIds = new Set(getImageIdsByScope(state.images, state.selectedImageId, scope));
+    const scopedImages = state.images.filter((img) => scopedImageIds.has(img.id));
+    const skippedUnsupportedCount = scopedImages.filter((img) => !isSupportedImageFileName(img.name)).length;
+    const normalizedMetadataOptions = normalizeExportImageMetadataOptions(imageMetadataOptions);
+    const ctx = resolveExportContext(
+      state,
+      scope,
+      includeFallback,
+      namingOptions,
+      outputOptions,
+      includeImagesWithoutAnnotations,
+      normalizedMetadataOptions
+    );
+    if (!ctx) {
+      if (scopedImages.length > 0 && skippedUnsupportedCount === scopedImages.length) {
+        set({ statusText: 'No exportable images in selected scope.' });
+      } else if (!includeImagesWithoutAnnotations) {
+        set({ statusText: 'No images with exportable annotations in selected scope.' });
+      }
+      return;
+    }
 
-    const zip = new JSZip();
-    const rootName = sanitizeExportFolderName(folderName);
-    const root = zip.folder(rootName);
-    if (!root) return;
+    try {
+      const imageBlobById = await prepareExportImageBlobs(ctx, normalizedMetadataOptions);
+      const zip = new JSZip();
+      const rootName = sanitizeExportFolderName(folderName);
+      const root = zip.folder(rootName);
+      if (!root) return;
 
-    const yolo = root.folder('yolo');
-    const coco = root.folder('coco');
-    const voc = root.folder('voc');
-    if (!yolo || !coco || !voc) return;
+      const yolo = root.folder('yolo');
+      const coco = root.folder('coco');
+      const voc = root.folder('voc');
+      if (!yolo || !coco || !voc) return;
 
-    writeYoloDataset(yolo, ctx);
-    writeCocoDataset(coco, ctx);
-    writeVocDataset(voc, ctx);
+      writeYoloDataset(yolo, ctx, imageBlobById, normalizedMetadataOptions);
+      writeCocoDataset(coco, ctx, imageBlobById, normalizedMetadataOptions);
+      writeVocDataset(voc, ctx, imageBlobById, normalizedMetadataOptions);
 
-    const blob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(blob, `${rootName}_${Date.now()}.zip`);
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, `${rootName}_${Date.now()}.zip`);
+      if (skippedUnsupportedCount > 0) {
+        set({
+          statusText: `Export completed. Skipped ${skippedUnsupportedCount} unsupported image file${skippedUnsupportedCount === 1 ? '' : 's'}.`,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown conversion error.';
+      set({ statusText: `Export failed: ${message}` });
+    }
   },
 
   exportWorkspaceState: async () => {

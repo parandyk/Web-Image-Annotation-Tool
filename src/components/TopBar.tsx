@@ -12,7 +12,7 @@ import {
 import { SettingsTab } from './tabs/SettingsTab';
 
 type MenuId = 'open' | 'import' | 'export' | 'edit';
-const IMAGE_FILE_RE = /\.(jpg|jpeg|png|bmp|tiff|tif|webp|gif)$/i;
+const IMAGE_FILE_RE = /\.(jpg|jpeg|png|bmp|tiff|tif|webp)$/i;
 
 type VideoImportDialog = {
   file: File;
@@ -51,6 +51,11 @@ type ExportRequest =
       scope: ImageScope;
       namingMode: ExportImageNamingMode;
       namingBase: string;
+      convertImages: boolean;
+      convertFormat: 'jpeg' | 'png';
+      includeImagesWithoutAnnotations: boolean;
+      includeOriginalNameMetadata: boolean;
+      sanitizeImageMetadata: boolean;
     }
   | {
       kind: 'allFormats';
@@ -58,6 +63,11 @@ type ExportRequest =
       folderName: string;
       namingMode: ExportImageNamingMode;
       namingBase: string;
+      convertImages: boolean;
+      convertFormat: 'jpeg' | 'png';
+      includeImagesWithoutAnnotations: boolean;
+      includeOriginalNameMetadata: boolean;
+      sanitizeImageMetadata: boolean;
     };
 
 const DIGITS_ONLY_RE = /^\d*$/;
@@ -431,11 +441,35 @@ export function TopBar(): JSX.Element {
       mode: request.namingMode,
       baseName: request.namingBase,
     } as const;
+    const output = {
+      convert: request.convertImages,
+      format: request.convertFormat,
+    } as const;
+    const metadata = {
+      includeOriginalName: request.includeOriginalNameMetadata,
+      sanitizeImageMetadata: request.sanitizeImageMetadata,
+    } as const;
     if (request.kind === 'single') {
-      await exportAnnotations(request.format, request.scope, includeFallback, naming);
+      await exportAnnotations(
+        request.format,
+        request.scope,
+        includeFallback,
+        naming,
+        output,
+        request.includeImagesWithoutAnnotations,
+        metadata
+      );
       return;
     }
-    await exportAllAnnotations(request.scope, request.folderName, includeFallback, naming);
+    await exportAllAnnotations(
+      request.scope,
+      request.folderName,
+      includeFallback,
+      naming,
+      output,
+      request.includeImagesWithoutAnnotations,
+      metadata
+    );
   };
 
   const defaultExportScope = (): ImageScope => {
@@ -451,6 +485,11 @@ export function TopBar(): JSX.Element {
       scope: defaultExportScope(),
       namingMode: 'sequential',
       namingBase: 'image',
+      convertImages: false,
+      convertFormat: 'png',
+      includeImagesWithoutAnnotations: true,
+      includeOriginalNameMetadata: false,
+      sanitizeImageMetadata: false,
     });
     closeMenus();
   };
@@ -462,6 +501,11 @@ export function TopBar(): JSX.Element {
       folderName: 'annotation_exports',
       namingMode: 'sequential',
       namingBase: 'image',
+      convertImages: false,
+      convertFormat: 'png',
+      includeImagesWithoutAnnotations: true,
+      includeOriginalNameMetadata: false,
+      sanitizeImageMetadata: false,
     });
     closeMenus();
   };
@@ -1539,6 +1583,68 @@ export function TopBar(): JSX.Element {
                     </label>
                   </div>
                 )}
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={exportDialog.convertImages}
+                    onChange={(e) =>
+                      setExportDialog((prev) => (prev ? { ...prev, convertImages: e.target.checked } : prev))
+                    }
+                  />
+                  <span>Convert images on export</span>
+                </label>
+                {exportDialog.convertImages && (
+                  <label>
+                    Target image format
+                    <select
+                      value={exportDialog.convertFormat}
+                      onChange={(e) =>
+                        setExportDialog((prev) =>
+                          prev ? { ...prev, convertFormat: e.target.value === 'jpeg' ? 'jpeg' : 'png' } : prev
+                        )
+                      }
+                    >
+                      <option value="png">PNG</option>
+                      <option value="jpeg">JPEG</option>
+                    </select>
+                  </label>
+                )}
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={exportDialog.includeImagesWithoutAnnotations}
+                    onChange={(e) =>
+                      setExportDialog((prev) =>
+                        prev ? { ...prev, includeImagesWithoutAnnotations: e.target.checked } : prev
+                      )
+                    }
+                  />
+                  <span>Include images without annotations</span>
+                </label>
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={exportDialog.includeOriginalNameMetadata}
+                    onChange={(e) =>
+                      setExportDialog((prev) =>
+                        prev ? { ...prev, includeOriginalNameMetadata: e.target.checked } : prev
+                      )
+                    }
+                  />
+                  <span>Include original image names in metadata</span>
+                </label>
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={exportDialog.sanitizeImageMetadata}
+                    onChange={(e) =>
+                      setExportDialog((prev) =>
+                        prev ? { ...prev, sanitizeImageMetadata: e.target.checked } : prev
+                      )
+                    }
+                  />
+                  <span>Sanitize image metadata (EXIF/device data)</span>
+                </label>
                 <div className="row dialog-actions">
                   <button onClick={() => setExportDialog(null)}>Cancel</button>
                   <button
@@ -1562,23 +1668,74 @@ export function TopBar(): JSX.Element {
             <div className="panel-stack">
               <section>
                 <h4>Export warning</h4>
-                <p>
-                  {pendingExport.kind === 'single'
-                    ? `Format: ${pendingExport.format.toUpperCase()}. `
-                    : `Format: all (COCO, YOLO, VOC). Folder: ${pendingExport.folderName}. `}
-                  Export scope:{' '}
-                  {pendingExport.scope === 'currentImage'
-                    ? 'current image'
-                    : pendingExport.scope === 'bookmarkedImages'
-                      ? 'bookmarked images'
-                      : 'all images'}
-                  . Image naming:{' '}
-                  {pendingExport.namingMode === 'original'
-                    ? 'keep original names'
-                    : `sequential (${pendingExport.namingBase || 'image'}_N)`}
-                  .{' '}
-                  Unassigned class {exportIncludeUnassigned ? 'will be' : 'will not be'} exported.
-                </p>
+                <div className="export-warning-list" role="list">
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Format</span>
+                    <span className="export-warning-value">
+                      {pendingExport.kind === 'single'
+                        ? pendingExport.format.toUpperCase()
+                        : 'All (COCO, YOLO, VOC)'}
+                    </span>
+                  </div>
+                  {pendingExport.kind === 'allFormats' ? (
+                    <div className="export-warning-row" role="listitem">
+                      <span className="export-warning-key">Output folder</span>
+                      <span className="export-warning-value">{pendingExport.folderName}</span>
+                    </div>
+                  ) : null}
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Export scope</span>
+                    <span className="export-warning-value">
+                      {pendingExport.scope === 'currentImage'
+                        ? 'Current image'
+                        : pendingExport.scope === 'bookmarkedImages'
+                          ? 'Bookmarked images'
+                          : 'All images'}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Image naming</span>
+                    <span className="export-warning-value">
+                      {pendingExport.namingMode === 'original'
+                        ? 'Keep original names'
+                        : `Sequential (${pendingExport.namingBase || 'image'}_N)`}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Image conversion</span>
+                    <span className="export-warning-value">
+                      {pendingExport.convertImages
+                        ? pendingExport.convertFormat === 'jpeg'
+                          ? 'JPEG'
+                          : 'PNG'
+                        : 'None'}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Include images without annotations</span>
+                    <span className="export-warning-value">
+                      {pendingExport.includeImagesWithoutAnnotations ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Original name metadata</span>
+                    <span className="export-warning-value">
+                      {pendingExport.includeOriginalNameMetadata ? 'Included' : 'Not included'}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Image metadata sanitization</span>
+                    <span className="export-warning-value">
+                      {pendingExport.sanitizeImageMetadata ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  <div className="export-warning-row" role="listitem">
+                    <span className="export-warning-key">Unassigned class export</span>
+                    <span className="export-warning-value">
+                      {exportIncludeUnassigned ? 'Will be exported' : 'Will not be exported'}
+                    </span>
+                  </div>
+                </div>
                 <label className="inline-check">
                   <input
                     type="checkbox"

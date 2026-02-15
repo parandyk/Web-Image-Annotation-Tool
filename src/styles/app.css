@@ -797,6 +797,29 @@ label.inline-check {
   font-family: Consolas, 'Courier New', monospace;
 }
 
+.export-warning-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.export-warning-row {
+  display: grid;
+  grid-template-columns: minmax(132px, 180px) 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 13px;
+}
+
+.export-warning-key {
+  color: var(--text-1);
+}
+
+.export-warning-value {
+  color: var(--text-0);
+  word-break: break-word;
+}
+
 .radio-row {
   display: flex;
   align-items: center;
