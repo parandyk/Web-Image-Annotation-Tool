@@ -121,23 +121,25 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
         </div>
       </section>
 
-      <section>
-        <h4>Class assignment</h4>
-        <div className="row">
-          <button
-            className={classAssignmentMode === 'activeClass' ? 'active' : ''}
-            onClick={() => setClassAssignmentMode('activeClass')}
-          >
-            Active class
-          </button>
-          <button
-            className={classAssignmentMode === 'deferred' ? 'active' : ''}
-            onClick={() => setClassAssignmentMode('deferred')}
-          >
-            Deferred
-          </button>
-        </div>
-      </section>
+      {isDialogVariant && (
+        <section>
+          <h4>Class assignment</h4>
+          <div className="row">
+            <button
+              className={classAssignmentMode === 'activeClass' ? 'active' : ''}
+              onClick={() => setClassAssignmentMode('activeClass')}
+            >
+              Active class
+            </button>
+            <button
+              className={classAssignmentMode === 'deferred' ? 'active' : ''}
+              onClick={() => setClassAssignmentMode('deferred')}
+            >
+              Deferred
+            </button>
+          </div>
+        </section>
+      )}
 
       <section>
         <h4>Rendering</h4>
