@@ -166,6 +166,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const showMinimap = useAppStore((s) => s.showMinimap);
   const minimapLocation = useAppStore((s) => s.minimapLocation);
   const showLabels = useAppStore((s) => s.showLabels);
+  const nextDisplayIdByClass = useAppStore((s) => s.nextDisplayIdByClass);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteAnnotationWarning = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
@@ -260,12 +261,41 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   }, [image.annotations, selectedAnnotationIds]);
 
   const draftClassColor = useMemo(() => {
-    const classIdForDraft =
-      classAssignmentMode === 'deferred'
-        ? liveDraftClassId ?? defaultClassId
-        : selectedClassId;
+    const classIdForDraft = classAssignmentMode === 'deferred' ? liveDraftClassId ?? defaultClassId : selectedClassId;
     return classById.get(classIdForDraft)?.color ?? '#38bdf8';
   }, [classAssignmentMode, classById, defaultClassId, liveDraftClassId, selectedClassId]);
+
+  const draftClassId = useMemo(() => {
+    const requestedId = classAssignmentMode === 'deferred' ? liveDraftClassId ?? defaultClassId : selectedClassId;
+    return classById.has(requestedId) ? requestedId : defaultClassId;
+  }, [classAssignmentMode, classById, defaultClassId, liveDraftClassId, selectedClassId]);
+
+  const draftClassName = useMemo(
+    () => classById.get(draftClassId)?.name ?? 'Unassigned',
+    [classById, draftClassId]
+  );
+
+  const draftDisplayId = useMemo(() => {
+    const direct = nextDisplayIdByClass[image.id];
+    if (Number.isFinite(direct) && direct >= 1) return Math.max(1, Math.floor(direct));
+    const maxDisplayId = image.annotations.reduce((max, ann) => Math.max(max, ann.displayId ?? 0), 0);
+    return maxDisplayId + 1;
+  }, [image.annotations, image.id, nextDisplayIdByClass]);
+
+  const menuTargetIds = useMemo(() => {
+    if (!menu) return [] as string[];
+    return selectedIdsForImage.length > 1 && selectedIdsForImage.includes(menu.annId)
+      ? [...selectedIdsForImage]
+      : [menu.annId];
+  }, [menu, selectedIdsForImage]);
+
+  const menuAnnotationInfo = useMemo(() => {
+    if (menuTargetIds.length !== 1) return null;
+    const ann = image.annotations.find((a) => a.id === menuTargetIds[0]);
+    if (!ann) return null;
+    const className = classById.get(ann.classId)?.name ?? 'Unknown';
+    return `#${ann.displayId} ${className}`;
+  }, [classById, image.annotations, menuTargetIds]);
 
   // Load the browser image element once per selected source.
   useEffect(() => {
@@ -1454,6 +1484,22 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                 );
               })}
 
+            {draftBBox && (
+              <Text
+                key="draft_label"
+                x={draftBBox.x + (drawBoxBorder ? lineThickness / viewScale + 5 / viewScale : 5 / viewScale)}
+                y={Math.max(
+                  0,
+                  draftBBox.y + (drawBoxBorder ? lineThickness / viewScale + 2 / viewScale : 2 / viewScale)
+                )}
+                text={`#${draftDisplayId} ${draftClassName}`}
+                fill={draftClassColor}
+                fontStyle="bold"
+                fontSize={14 / viewScale}
+                listening={false}
+              />
+            )}
+
             {draftBBox && !showCrosshair && (
               <Rect
                 x={draftBBox.x}
@@ -1513,6 +1559,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       {menu && (
         // Right-click menu supports single or multi-selection operations.
         <PortalMenu x={menu.x} y={menu.y} menuRef={menuRef}>
+          {menuAnnotationInfo ? <div className="annotation-menu-context">{menuAnnotationInfo}</div> : null}
           <button
             onClick={() => {
               if (selectedIdsForImage.length > 1 && selectedIdsForImage.includes(menu.annId)) {
