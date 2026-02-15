@@ -778,6 +778,25 @@ label.inline-check {
   margin-top: 6px;
 }
 
+.export-naming-row {
+  align-items: flex-end;
+}
+
+.export-naming-base {
+  flex: 0 0 42%;
+  min-width: 150px;
+  max-width: 210px;
+}
+
+.export-naming-preview {
+  flex: 1 1 0;
+  min-width: 170px;
+}
+
+.export-naming-preview input[readonly] {
+  font-family: Consolas, 'Courier New', monospace;
+}
+
 .radio-row {
   display: flex;
   align-items: center;

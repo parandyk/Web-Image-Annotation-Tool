@@ -42,9 +42,23 @@ type WorkspaceClassOperationDialog =
   | { type: 'anchoring'; selectedClassIds: string[]; search: string; value: 'anchor' | 'unanchor' }
   | { type: 'visibility'; selectedClassIds: string[]; search: string; value: 'show' | 'hide' };
 
+type ExportImageNamingMode = 'original' | 'sequential';
+
 type ExportRequest =
-  | { kind: 'single'; format: 'yolo' | 'coco' | 'voc'; scope: ImageScope }
-  | { kind: 'allFormats'; scope: ImageScope; folderName: string };
+  | {
+      kind: 'single';
+      format: 'yolo' | 'coco' | 'voc';
+      scope: ImageScope;
+      namingMode: ExportImageNamingMode;
+      namingBase: string;
+    }
+  | {
+      kind: 'allFormats';
+      scope: ImageScope;
+      folderName: string;
+      namingMode: ExportImageNamingMode;
+      namingBase: string;
+    };
 
 const DIGITS_ONLY_RE = /^\d*$/;
 const DECIMAL_RE = /^\d*(?:\.\d*)?$/;
@@ -76,6 +90,23 @@ function formatTimeSec(seconds: number): string {
   const h = Math.floor(totalMin / 60);
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
   return `${m}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
+function sanitizeExportImageBaseNamePreview(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return 'image';
+  const safe = trimmed
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/\.+$/g, '')
+    .slice(0, 80);
+  return safe.length > 0 ? safe : 'image';
+}
+
+function getFileExtension(name: string): string {
+  const idx = name.lastIndexOf('.');
+  if (idx <= 0 || idx === name.length - 1) return '';
+  return name.slice(idx);
 }
 
 export function TopBar(): JSX.Element {
@@ -378,15 +409,33 @@ export function TopBar(): JSX.Element {
     return hasImages;
   };
 
+  const getImagesForScope = (scope: ImageScope) => {
+    if (scope === 'currentImage') return selectedImage ? [selectedImage] : [];
+    if (scope === 'bookmarkedImages') return images.filter((img) => img.isBookmarked);
+    return images;
+  };
+
+  const sequentialNamingPreview = useMemo(() => {
+    if (!exportDialog || exportDialog.namingMode !== 'sequential') return '';
+    const base = sanitizeExportImageBaseNamePreview(exportDialog.namingBase);
+    const sampleImage = getImagesForScope(exportDialog.scope)[0];
+    const ext = sampleImage ? getFileExtension(sampleImage.name) : '';
+    return `${base}_1${ext}`;
+  }, [exportDialog, images, selectedImage]);
+
   const executeExportRequest = async (
     request: ExportRequest,
     includeFallback: boolean
   ): Promise<void> => {
+    const naming = {
+      mode: request.namingMode,
+      baseName: request.namingBase,
+    } as const;
     if (request.kind === 'single') {
-      await exportAnnotations(request.format, request.scope, includeFallback);
+      await exportAnnotations(request.format, request.scope, includeFallback, naming);
       return;
     }
-    await exportAllAnnotations(request.scope, request.folderName, includeFallback);
+    await exportAllAnnotations(request.scope, request.folderName, includeFallback, naming);
   };
 
   const defaultExportScope = (): ImageScope => {
@@ -396,12 +445,24 @@ export function TopBar(): JSX.Element {
   };
 
   const openSingleExportDialog = (format: 'yolo' | 'coco' | 'voc'): void => {
-    setExportDialog({ kind: 'single', format, scope: defaultExportScope() });
+    setExportDialog({
+      kind: 'single',
+      format,
+      scope: defaultExportScope(),
+      namingMode: 'sequential',
+      namingBase: 'image',
+    });
     closeMenus();
   };
 
   const openAllFormatsExportDialog = (): void => {
-    setExportDialog({ kind: 'allFormats', scope: defaultExportScope(), folderName: 'annotation_exports' });
+    setExportDialog({
+      kind: 'allFormats',
+      scope: defaultExportScope(),
+      folderName: 'annotation_exports',
+      namingMode: 'sequential',
+      namingBase: 'image',
+    });
     closeMenus();
   };
 
@@ -1440,6 +1501,44 @@ export function TopBar(): JSX.Element {
                     />
                   </label>
                 )}
+                <h5>Image naming</h5>
+                <div className="row">
+                  <button
+                    className={exportDialog.namingMode === 'original' ? 'active' : ''}
+                    onClick={() =>
+                      setExportDialog((prev) => (prev ? { ...prev, namingMode: 'original' } : prev))
+                    }
+                  >
+                    Keep original names
+                  </button>
+                  <button
+                    className={exportDialog.namingMode === 'sequential' ? 'active' : ''}
+                    onClick={() =>
+                      setExportDialog((prev) => (prev ? { ...prev, namingMode: 'sequential' } : prev))
+                    }
+                  >
+                    Sequential
+                  </button>
+                </div>
+                {exportDialog.namingMode === 'sequential' && (
+                  <div className="row wrap export-naming-row">
+                    <label className="export-naming-base">
+                      Base name
+                      <input
+                        type="text"
+                        value={exportDialog.namingBase}
+                        onChange={(e) =>
+                          setExportDialog((prev) => (prev ? { ...prev, namingBase: e.target.value } : prev))
+                        }
+                        placeholder="image"
+                      />
+                    </label>
+                    <label className="export-naming-preview">
+                      Preview
+                      <input type="text" value={sequentialNamingPreview} readOnly aria-label="Sequential name preview" />
+                    </label>
+                  </div>
+                )}
                 <div className="row dialog-actions">
                   <button onClick={() => setExportDialog(null)}>Cancel</button>
                   <button
@@ -1473,6 +1572,10 @@ export function TopBar(): JSX.Element {
                     : pendingExport.scope === 'bookmarkedImages'
                       ? 'bookmarked images'
                       : 'all images'}
+                  . Image naming:{' '}
+                  {pendingExport.namingMode === 'original'
+                    ? 'keep original names'
+                    : `sequential (${pendingExport.namingBase || 'image'}_N)`}
                   .{' '}
                   Unassigned class {exportIncludeUnassigned ? 'will be' : 'will not be'} exported.
                 </p>

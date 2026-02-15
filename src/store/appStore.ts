@@ -64,6 +64,11 @@ type ViewState = {
 };
 
 type ClassInstanceScope = ImageScope;
+type ExportImageNamingMode = 'original' | 'sequential';
+type ExportImageNamingOptions = {
+  mode: ExportImageNamingMode;
+  baseName?: string;
+};
 
 type AppState = ViewState & {
   statusText: string | null;
@@ -182,8 +187,18 @@ type AppState = ViewState & {
   restoreRecoverySnapshot: (snapshot: WorkspaceRecoverySnapshot) => void;
 
   exportClassesTxt: () => Promise<void>;
-  exportAnnotations: (format: ExportAnnotationFormat, scope: ImageScope, includeFallback?: boolean) => Promise<void>;
-  exportAllAnnotations: (scope: ImageScope, folderName: string, includeFallback?: boolean) => Promise<void>;
+  exportAnnotations: (
+    format: ExportAnnotationFormat,
+    scope: ImageScope,
+    includeFallback?: boolean,
+    namingOptions?: ExportImageNamingOptions
+  ) => Promise<void>;
+  exportAllAnnotations: (
+    scope: ImageScope,
+    folderName: string,
+    includeFallback?: boolean,
+    namingOptions?: ExportImageNamingOptions
+  ) => Promise<void>;
   exportWorkspaceState: () => Promise<void>;
 };
 
@@ -691,12 +706,51 @@ type ExportContext = {
   images: ImageItem[];
   classes: ClassData[];
   classMap: Map<string, number>;
+  fileNameByImageId: Map<string, string>;
 };
+
+function sanitizeExportImageBaseName(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return 'image';
+  const safe = trimmed
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/\.+$/g, '')
+    .slice(0, 80);
+  return safe.length > 0 ? safe : 'image';
+}
+
+function buildExportImageFileNameMap(
+  images: ImageItem[],
+  namingOptions: ExportImageNamingOptions
+): Map<string, string> {
+  const mode = namingOptions.mode ?? 'sequential';
+  const mapped = new Map<string, string>();
+  const used = new Set<string>();
+
+  if (mode === 'original') {
+    for (const image of images) {
+      const uniqueName = toUniqueName(image.name, used);
+      mapped.set(image.id, uniqueName);
+    }
+    return mapped;
+  }
+
+  const baseName = sanitizeExportImageBaseName(namingOptions.baseName ?? 'image');
+  images.forEach((image, index) => {
+    const { ext } = splitNameAndExt(image.name);
+    const raw = `${baseName}_${index + 1}${ext}`;
+    const uniqueName = toUniqueName(raw, used);
+    mapped.set(image.id, uniqueName);
+  });
+  return mapped;
+}
 
 function resolveExportContext(
   state: Pick<AppState, 'images' | 'selectedImageId' | 'classes'>,
   scope: ImageScope,
-  includeFallback: boolean
+  includeFallback: boolean,
+  namingOptions: ExportImageNamingOptions
 ): ExportContext | null {
   const imageIdSet = new Set(getImageIdsByScope(state.images, state.selectedImageId, scope));
   const images = state.images.filter((img) => imageIdSet.has(img.id));
@@ -715,7 +769,8 @@ function resolveExportContext(
     classMap = new Map(classes.map((c, idx) => [c.id, idx]));
   }
 
-  return { images, classes, classMap };
+  const fileNameByImageId = buildExportImageFileNameMap(images, namingOptions);
+  return { images, classes, classMap, fileNameByImageId };
 }
 
 function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
@@ -727,7 +782,8 @@ function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
   root.file('classes.txt', classNames);
 
   for (const image of ctx.images) {
-    imagesFolder.file(image.name, image.file);
+    const exportImageName = ctx.fileNameByImageId.get(image.id) ?? image.name;
+    imagesFolder.file(exportImageName, image.file);
 
     const lines = image.annotations
       .filter((a) => ctx.classMap.has(a.classId))
@@ -741,7 +797,7 @@ function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
       })
       .join('\n');
 
-    const labelName = image.name.replace(/\.[^.]+$/, '.txt');
+    const labelName = exportImageName.replace(/\.[^.]+$/, '.txt');
     labelsFolder.file(labelName, lines);
   }
 
@@ -762,7 +818,8 @@ function writeCocoDataset(root: JSZip, ctx: ExportContext): void {
   const imagesFolder = root.folder('images');
   if (!imagesFolder) return;
   for (const image of ctx.images) {
-    imagesFolder.file(image.name, image.file);
+    const exportImageName = ctx.fileNameByImageId.get(image.id) ?? image.name;
+    imagesFolder.file(exportImageName, image.file);
   }
 
   const round = (v: number, places: number): number => {
@@ -782,7 +839,7 @@ function writeCocoDataset(root: JSZip, ctx: ExportContext): void {
     },
     images: ctx.images.map((img, idx) => ({
       id: idx + 1,
-      file_name: img.name,
+      file_name: ctx.fileNameByImageId.get(img.id) ?? img.name,
       width: img.width,
       height: img.height,
     })),
@@ -816,15 +873,16 @@ function writeVocDataset(root: JSZip, ctx: ExportContext): void {
 
   const classById = new Map(ctx.classes.map((c) => [c.id, c]));
   for (const image of ctx.images) {
-    imagesFolder.file(image.name, image.file);
+    const exportImageName = ctx.fileNameByImageId.get(image.id) ?? image.name;
+    imagesFolder.file(exportImageName, image.file);
     const objects = image.annotations
       .filter((ann) => classById.has(ann.classId))
       .map((ann) => ({
         className: classById.get(ann.classId)?.name ?? FALLBACK_CLASS_NAME,
         bbox: ann.bbox,
       }));
-    const xml = buildVocAnnotationXml(image.name, image.width, image.height, objects);
-    const xmlName = image.name.replace(/\.[^.]+$/, '.xml');
+    const xml = buildVocAnnotationXml(exportImageName, image.width, image.height, objects);
+    const xmlName = exportImageName.replace(/\.[^.]+$/, '.xml');
     annotationsFolder.file(xmlName, xml);
   }
 }
@@ -3765,9 +3823,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     downloadBlob(blob, 'classes.txt');
   },
 
-  exportAnnotations: async (format, scope, includeFallback = false) => {
+  exportAnnotations: async (format, scope, includeFallback = false, namingOptions = { mode: 'sequential', baseName: 'image' }) => {
     const state = get();
-    const ctx = resolveExportContext(state, scope, includeFallback);
+    const ctx = resolveExportContext(state, scope, includeFallback, namingOptions);
     if (!ctx) return;
 
     const zip = new JSZip();
@@ -3778,9 +3836,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     downloadBlob(blob, `dataset_${format}_${Date.now()}.zip`);
   },
 
-  exportAllAnnotations: async (scope, folderName, includeFallback = false) => {
+  exportAllAnnotations: async (
+    scope,
+    folderName,
+    includeFallback = false,
+    namingOptions = { mode: 'sequential', baseName: 'image' }
+  ) => {
     const state = get();
-    const ctx = resolveExportContext(state, scope, includeFallback);
+    const ctx = resolveExportContext(state, scope, includeFallback, namingOptions);
     if (!ctx) return;
 
     const zip = new JSZip();
