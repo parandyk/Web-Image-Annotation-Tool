@@ -1007,6 +1007,7 @@ label.inline-check {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  table-layout: fixed;
 }
 
 .statistics-table th {
@@ -1025,15 +1026,29 @@ label.inline-check {
   border-bottom: 1px solid rgba(55, 65, 81, 0.45);
 }
 
+.statistics-col-num {
+  width: 110px;
+}
+
+.statistics-num-head {
+  text-align: right !important;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
 .statistics-name-cell {
-  max-width: 420px;
+  max-width: 0;
   min-width: 0;
+}
+
+.statistics-name-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .statistics-name-text {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

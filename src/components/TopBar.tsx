@@ -1325,23 +1325,30 @@ export function TopBar(): JSX.Element {
             <section className="statistics-section">
               <h4>Class instances</h4>
               <div className="statistics-table-wrap">
-                <table className="statistics-table">
+                <table className="statistics-table statistics-table-class">
+                  <colgroup>
+                    <col />
+                    <col className="statistics-col-num" />
+                    <col className="statistics-col-num" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>Class</th>
-                      <th>Instances</th>
-                      <th>Percent</th>
+                      <th className="statistics-num-head">Instances</th>
+                      <th className="statistics-num-head">Percent</th>
                     </tr>
                   </thead>
                   <tbody>
                     {statisticsData.classRows.map((row) => (
                       <tr key={row.id}>
                         <td className="statistics-name-cell" title={row.name}>
-                          <span className="color-dot" style={{ background: row.color }} />
-                          <span className="statistics-name-text">
-                            {row.name}
-                            {row.isDefault ? ' (Unassigned)' : ''}
-                          </span>
+                          <div className="statistics-name-wrap">
+                            <span className="color-dot" style={{ background: row.color }} />
+                            <span className="statistics-name-text">
+                              {row.name}
+                              {row.isDefault ? ' (Unassigned)' : ''}
+                            </span>
+                          </div>
                         </td>
                         <td className="statistics-num">{row.count}</td>
                         <td className="statistics-num">{row.percentage.toFixed(1)}%</td>
@@ -1355,13 +1362,19 @@ export function TopBar(): JSX.Element {
             <section className="statistics-section">
               <h4>Per-image annotations</h4>
               <div className="statistics-table-wrap">
-                <table className="statistics-table">
+                <table className="statistics-table statistics-table-image">
+                  <colgroup>
+                    <col />
+                    <col className="statistics-col-num" />
+                    <col className="statistics-col-num" />
+                    <col className="statistics-col-num" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>Image</th>
-                      <th>Annotations</th>
-                      <th>Unassigned</th>
-                      <th>Assigned</th>
+                      <th className="statistics-num-head">Annotations</th>
+                      <th className="statistics-num-head">Unassigned</th>
+                      <th className="statistics-num-head">Assigned</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1375,7 +1388,9 @@ export function TopBar(): JSX.Element {
                       statisticsData.perImageRows.map((row) => (
                         <tr key={row.id}>
                           <td className="statistics-name-cell" title={row.name}>
-                            <span className="statistics-name-text">{row.name}</span>
+                            <div className="statistics-name-wrap">
+                              <span className="statistics-name-text">{row.name}</span>
+                            </div>
                           </td>
                           <td className="statistics-num">{row.total}</td>
                           <td className="statistics-num">{row.unassigned}</td>
