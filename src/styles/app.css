@@ -1487,7 +1487,8 @@ label.inline-check {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(31, 41, 55, 0.55);
-  padding: 6px 8px;
+  min-height: 38px;
+  padding: 0 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1527,7 +1528,8 @@ label.inline-check {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(31, 41, 55, 0.55);
-  padding: 6px 8px;
+  min-height: 38px;
+  padding: 0 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1536,15 +1538,21 @@ label.inline-check {
 
 .coord-key {
   color: var(--text-1);
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 
 .coord-value {
   margin-left: auto;
   min-width: 62px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
   text-align: right;
   font-family: Consolas, 'Courier New', monospace;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 @media (max-width: 1200px) {
