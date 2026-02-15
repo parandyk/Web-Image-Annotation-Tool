@@ -41,6 +41,18 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function areSettingsSnapshotsEqual(
+  left: Record<string, boolean | number | string> | null,
+  right: Record<string, boolean | number | string> | null
+): boolean {
+  if (!left || !right) return left === right;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
+
 function formatTimeSec(seconds: number): string {
   const safe = Math.max(0, seconds);
   const totalMs = Math.round(safe * 1000);
@@ -57,6 +69,7 @@ function formatTimeSec(seconds: number): string {
 export function TopBar(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, boolean | number | string> | null>(null);
+  const [confirmCloseSettings, setConfirmCloseSettings] = useState(false);
   const [pendingExport, setPendingExport] = useState<{ format: 'yolo' | 'coco' | 'voc'; global: boolean } | null>(null);
   const [confirmClearWorkspace, setConfirmClearWorkspace] = useState(false);
   const [videoImportDialog, setVideoImportDialog] = useState<VideoImportDialog | null>(null);
@@ -272,6 +285,24 @@ export function TopBar(): JSX.Element {
     setSuppressRemoveInstances(Boolean(snap.suppressRemoveInstances));
   };
 
+  const hasPendingSettingsChanges =
+    settingsOpen &&
+    settingsSnapshot !== null &&
+    !areSettingsSnapshotsEqual(currentSettingsSnapshot(), settingsSnapshot);
+
+  const closeSettingsDialog = (): void => {
+    setConfirmCloseSettings(false);
+    setSettingsOpen(false);
+    setSettingsSnapshot(null);
+  };
+
+  const abortSettingsChanges = (): void => {
+    if (settingsSnapshot) {
+      applySettingsSnapshot(settingsSnapshot);
+    }
+    closeSettingsDialog();
+  };
+
   const exportAnnotationGroups = useMemo(
     () => [
       {
@@ -455,16 +486,34 @@ export function TopBar(): JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        setOpenMenu(null);
-        if (videoImportDialog && !videoImportBusy) {
-          setVideoImportDialog(null);
+      if (e.key !== 'Escape') return;
+
+      setOpenMenu(null);
+
+      if (confirmCloseSettings) {
+        e.preventDefault();
+        setConfirmCloseSettings(false);
+        return;
+      }
+
+      if (videoImportDialog && !videoImportBusy) {
+        e.preventDefault();
+        setVideoImportDialog(null);
+        return;
+      }
+
+      if (settingsOpen) {
+        e.preventDefault();
+        if (hasPendingSettingsChanges) {
+          setConfirmCloseSettings(true);
+        } else {
+          closeSettingsDialog();
         }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [videoImportBusy, videoImportDialog]);
+  }, [confirmCloseSettings, hasPendingSettingsChanges, settingsOpen, videoImportBusy, videoImportDialog]);
 
   useEffect(() => {
     if (!settingsOpen && !videoImportDialog) return;
@@ -607,6 +656,7 @@ export function TopBar(): JSX.Element {
           <button
             onClick={() => {
               setSettingsSnapshot(currentSettingsSnapshot());
+              setConfirmCloseSettings(false);
               setSettingsOpen(true);
             }}
           >
@@ -623,8 +673,7 @@ export function TopBar(): JSX.Element {
             <div className="row dialog-actions">
               <button
                 onClick={() => {
-                  if (settingsSnapshot) applySettingsSnapshot(settingsSnapshot);
-                  setSettingsOpen(false);
+                  abortSettingsChanges();
                 }}
               >
                 Cancel
@@ -647,9 +696,24 @@ export function TopBar(): JSX.Element {
                   setSuppressRemoveInstances(false);
                 }}
               >
-                Revert to Default
+                Revert to default
               </button>
-              <button onClick={() => setSettingsOpen(false)}>Save</button>
+              <button onClick={() => closeSettingsDialog()} disabled={!hasPendingSettingsChanges}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmCloseSettings && settingsOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h3>Unsaved settings changes</h3>
+            <p>You have pending changes in settings. What do you want to do?</p>
+            <div className="row dialog-actions">
+              <button onClick={() => setConfirmCloseSettings(false)}>Cancel</button>
+              <button onClick={() => abortSettingsChanges()}>Abort changes</button>
+              <button onClick={() => closeSettingsDialog()}>Save changes</button>
             </div>
           </div>
         </div>

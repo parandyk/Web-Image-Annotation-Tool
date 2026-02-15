@@ -92,6 +92,20 @@ button:hover {
   border-color: var(--accent);
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--text-1);
+  border-color: var(--line);
+}
+
+button:disabled:hover,
+button:disabled:focus,
+button:disabled:focus-visible {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
 button.active {
   border-color: var(--accent);
   color: #fff;
