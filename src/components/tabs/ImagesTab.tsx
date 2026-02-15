@@ -35,7 +35,7 @@ function NavIcon({ kind }: { kind: 'first' | 'prev' | 'next' | 'last' }): JSX.El
   );
 }
 
-function ActionIcon({ kind }: { kind: 'hide' | 'show' | 'delete' | 'anchor' | 'unanchor' }): JSX.Element {
+function ActionIcon({ kind }: { kind: 'hide' | 'show' | 'delete' | 'anchor' | 'unanchor' | 'bookmark' | 'unbookmark' }): JSX.Element {
   if (kind === 'delete') {
     return (
       <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -69,6 +69,21 @@ function ActionIcon({ kind }: { kind: 'hide' | 'show' | 'delete' | 'anchor' | 'u
       <svg viewBox="0 0 20 20" aria-hidden="true">
         <path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5z" />
         <circle cx="10" cy="10" r="2.5" />
+      </svg>
+    );
+  }
+  if (kind === 'bookmark') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M6 3.5h8a1 1 0 0 1 1 1V16l-5-2.7L5 16V4.5a1 1 0 0 1 1-1z" />
+      </svg>
+    );
+  }
+  if (kind === 'unbookmark') {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M6 3.5h8a1 1 0 0 1 1 1V16l-5-2.7L5 16V4.5a1 1 0 0 1 1-1z" />
+        <path d="M4 16L16 4" />
       </svg>
     );
   }
@@ -111,6 +126,8 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   const setAnnotationFilter = useAppStore((s) => s.setAnnotationFilter);
 
   const selectImage = useAppStore((s) => s.selectImage);
+  const toggleImageBookmark = useAppStore((s) => s.toggleImageBookmark);
+  const setImagesBookmarked = useAppStore((s) => s.setImagesBookmarked);
   const deleteImage = useAppStore((s) => s.deleteImage);
   const deleteImages = useAppStore((s) => s.deleteImages);
   const selectAnnotation = useAppStore((s) => s.selectAnnotation);
@@ -417,6 +434,8 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
           <option value="none">None</option>
           <option value="hideAnnotated">Hide annotated</option>
           <option value="hideUnannotated">Hide unannotated</option>
+          <option value="hideBookmarked">Hide bookmarked</option>
+          <option value="hideUnbookmarked">Hide unbookmarked</option>
         </select>
       </label>
       <label>
@@ -502,6 +521,16 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
               }}
             >
               <MiddleTruncate text={img.name} className="image-name-mid" />
+            </button>
+            <button
+              className="icon-action-btn"
+              title={img.isBookmarked ? 'Remove bookmark' : 'Bookmark image'}
+              aria-label={img.isBookmarked ? 'Remove bookmark' : 'Bookmark image'}
+              onClick={() => {
+                toggleImageBookmark(img.id);
+              }}
+            >
+              <ActionIcon kind={img.isBookmarked ? 'unbookmark' : 'bookmark'} />
             </button>
             <button
               className="icon-action-btn"
@@ -764,15 +793,35 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
       {listMenu && (
         <PortalMenu x={listMenu.x} y={listMenu.y} menuRef={listMenuRef}>
           {listMenu.type === 'image' ? (
-            <button
-              onClick={() => {
-                const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
-                deleteImageIdsWithWarning(ids);
-                setListMenu(null);
-              }}
-            >
-              Delete selected
-            </button>
+            <>
+              <button
+                onClick={() => {
+                  const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                  setImagesBookmarked(ids, true);
+                  setListMenu(null);
+                }}
+              >
+                Bookmark selected
+              </button>
+              <button
+                onClick={() => {
+                  const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                  setImagesBookmarked(ids, false);
+                  setListMenu(null);
+                }}
+              >
+                Remove bookmark from selected
+              </button>
+              <button
+                onClick={() => {
+                  const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                  deleteImageIdsWithWarning(ids);
+                  setListMenu(null);
+                }}
+              >
+                Delete selected
+              </button>
+            </>
           ) : (
             <>
               <button

@@ -36,6 +36,14 @@ export function useSortedFilteredImages(): ImageItem[] {
       list = list.filter((i) => i.annotations.length > 0);
     }
 
+    if (imageFilter === 'hideBookmarked') {
+      list = list.filter((i) => !i.isBookmarked);
+    }
+
+    if (imageFilter === 'hideUnbookmarked') {
+      list = list.filter((i) => i.isBookmarked);
+    }
+
     const validClassIds = new Set(classes.map((c) => c.id));
     const selectedClassIds = imageClassFilterClassIds.filter((classId) => validClassIds.has(classId));
     if (imageClassFilterMode !== 'none' && selectedClassIds.length > 0) {

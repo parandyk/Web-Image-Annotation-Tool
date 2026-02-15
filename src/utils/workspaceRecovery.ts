@@ -17,7 +17,7 @@ export type WorkspaceRecoveryViewState = {
     | 'smallestFirst'
     | 'mostAnnotations'
     | 'fewestAnnotations';
-  imageFilter: 'none' | 'hideAnnotated' | 'hideUnannotated';
+  imageFilter: 'none' | 'hideAnnotated' | 'hideUnannotated' | 'hideBookmarked' | 'hideUnbookmarked';
   imageClassFilterMode: 'none' | 'hasAny' | 'hasAll' | 'hasNone';
   imageClassFilterClassIds: string[];
   annotationSort:
@@ -52,6 +52,7 @@ export type WorkspaceRecoveryImage = {
   file: File;
   width: number;
   height: number;
+  isBookmarked: boolean;
   annotations: Annotation[];
   sourceKind?: ImageSourceKind;
   videoMeta?: VideoFrameMeta;

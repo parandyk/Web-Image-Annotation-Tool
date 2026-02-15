@@ -41,6 +41,7 @@ export type ImageItem = {
   src: string;
   width: number;
   height: number;
+  isBookmarked: boolean;
   annotations: Annotation[];
   sourceKind?: ImageSourceKind;
   videoMeta?: VideoFrameMeta;
@@ -60,7 +61,12 @@ export type AnnotationSortMode =
   | 'largestFirst'
   | 'smallestFirst';
 
-export type ImageFilterMode = 'none' | 'hideAnnotated' | 'hideUnannotated';
+export type ImageFilterMode =
+  | 'none'
+  | 'hideAnnotated'
+  | 'hideUnannotated'
+  | 'hideBookmarked'
+  | 'hideUnbookmarked';
 export type ImageClassFilterMode = 'none' | 'hasAny' | 'hasAll' | 'hasNone';
 export type ImageSortMode =
   | 'none'
@@ -80,3 +86,4 @@ export type ClassSortMode =
   | 'countDescending';
 
 export type ExportAnnotationFormat = 'yolo' | 'coco' | 'voc';
+export type ImageScope = 'currentImage' | 'bookmarkedImages' | 'allImages';

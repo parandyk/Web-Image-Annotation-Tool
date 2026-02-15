@@ -14,6 +14,7 @@ import {
   ImageClassFilterMode,
   ImageFilterMode,
   ImageItem,
+  ImageScope,
   ImageSortMode,
   InteractionMode,
 } from '../domain/types';
@@ -62,7 +63,7 @@ type ViewState = {
   dragDeadzonePx: number;
 };
 
-type ClassInstanceScope = 'global' | 'currentImage';
+type ClassInstanceScope = ImageScope;
 
 type AppState = ViewState & {
   statusText: string | null;
@@ -115,6 +116,8 @@ type AppState = ViewState & {
   importWorkspaceState: (file: File) => Promise<void>;
   openClassFileText: (content: string) => void;
   selectImage: (imageId: string | null) => void;
+  toggleImageBookmark: (imageId: string) => void;
+  setImagesBookmarked: (imageIds: string[], bookmarked: boolean) => void;
   selectClass: (classId: string) => void;
   selectAnnotation: (annotationId: string | null) => void;
   setAnnotationSelection: (annotationIds: string[], latestId?: string | null) => void;
@@ -151,11 +154,14 @@ type AppState = ViewState & {
   removeLastBBox: () => void;
   removeAllBBoxes: () => void;
   removeAllBBoxesGlobal: () => void;
+  removeAllBBoxesBookmarked: () => void;
   toggleAllAnchoringCurrentImage: () => void;
   setAllAnchoringCurrentImage: (anchored: boolean) => void;
   setAllVisibilityCurrentImage: (visible: boolean) => void;
   toggleAllAnchoringGlobal: () => void;
+  toggleAllAnchoringBookmarked: () => void;
   toggleAllVisibilityGlobal: () => void;
+  toggleAllVisibilityBookmarked: () => void;
 
   moveToNextImage: () => void;
   moveToPrevImage: () => void;
@@ -175,7 +181,8 @@ type AppState = ViewState & {
   restoreRecoverySnapshot: (snapshot: WorkspaceRecoverySnapshot) => void;
 
   exportClassesTxt: () => Promise<void>;
-  exportAnnotations: (format: ExportAnnotationFormat, global: boolean, includeFallback?: boolean) => Promise<void>;
+  exportAnnotations: (format: ExportAnnotationFormat, scope: ImageScope, includeFallback?: boolean) => Promise<void>;
+  exportAllAnnotations: (scope: ImageScope, folderName: string, includeFallback?: boolean) => Promise<void>;
   exportWorkspaceState: () => Promise<void>;
 };
 
@@ -539,6 +546,20 @@ function getDefaultClassId(classes: ClassData[], fallback = ''): string {
   return classes.find((c) => c.isDefault)?.id ?? classes[0]?.id ?? fallback;
 }
 
+function getImageIdsByScope(
+  images: ImageItem[],
+  selectedImageId: string | null,
+  scope: ImageScope
+): string[] {
+  if (scope === 'currentImage') {
+    return [selectedImageId].filter(Boolean) as string[];
+  }
+  if (scope === 'bookmarkedImages') {
+    return images.filter((img) => img.isBookmarked).map((img) => img.id);
+  }
+  return images.map((img) => img.id);
+}
+
 function getDefaultViewState(): ViewState {
   return {
     interactionMode: 'edit',
@@ -617,7 +638,11 @@ function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | nu
       ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
       defaults.imageSort
     ),
-    imageFilter: pickEnum(source.imageFilter, ['none', 'hideAnnotated', 'hideUnannotated'] as const, defaults.imageFilter),
+    imageFilter: pickEnum(
+      source.imageFilter,
+      ['none', 'hideAnnotated', 'hideUnannotated', 'hideBookmarked', 'hideUnbookmarked'] as const,
+      defaults.imageFilter
+    ),
     imageClassFilterMode: pickEnum(
       source.imageClassFilterMode,
       ['none', 'hasAny', 'hasAll', 'hasNone'] as const,
@@ -659,6 +684,159 @@ function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | nu
     showCrosshair: pickBool(source.showCrosshair, defaults.showCrosshair),
     dragDeadzonePx: Math.max(0, Math.floor(pickNum(source.dragDeadzonePx, defaults.dragDeadzonePx))),
   };
+}
+
+type ExportContext = {
+  images: ImageItem[];
+  classes: ClassData[];
+  classMap: Map<string, number>;
+};
+
+function resolveExportContext(
+  state: Pick<AppState, 'images' | 'selectedImageId' | 'classes'>,
+  scope: ImageScope,
+  includeFallback: boolean
+): ExportContext | null {
+  const imageIdSet = new Set(getImageIdsByScope(state.images, state.selectedImageId, scope));
+  const images = state.images.filter((img) => imageIdSet.has(img.id));
+  if (images.length === 0) return null;
+
+  const hasAnyAnnotation = images.some((img) => img.annotations.length > 0);
+  let classes = state.classes.filter((c) => includeFallback || !c.isDefault);
+  if (classes.length === 0) return null;
+
+  let classMap = new Map(classes.map((c, idx) => [c.id, idx]));
+  const hasMappedAnnotation = images.some((img) =>
+    img.annotations.some((ann) => classMap.has(ann.classId))
+  );
+  if (hasAnyAnnotation && !hasMappedAnnotation) {
+    classes = state.classes;
+    classMap = new Map(classes.map((c, idx) => [c.id, idx]));
+  }
+
+  return { images, classes, classMap };
+}
+
+function writeYoloDataset(root: JSZip, ctx: ExportContext): void {
+  const imagesFolder = root.folder('images');
+  const labelsFolder = root.folder('labels');
+  if (!imagesFolder || !labelsFolder) return;
+
+  const classNames = ctx.classes.map((c) => c.name).join('\n');
+  root.file('classes.txt', classNames);
+
+  for (const image of ctx.images) {
+    imagesFolder.file(image.name, image.file);
+
+    const lines = image.annotations
+      .filter((a) => ctx.classMap.has(a.classId))
+      .map((a) => {
+        const clsIdx = ctx.classMap.get(a.classId) ?? 0;
+        const cx = (a.bbox.x + a.bbox.width / 2) / image.width;
+        const cy = (a.bbox.y + a.bbox.height / 2) / image.height;
+        const w = a.bbox.width / image.width;
+        const h = a.bbox.height / image.height;
+        return `${clsIdx} ${cx.toFixed(6)} ${cy.toFixed(6)} ${w.toFixed(6)} ${h.toFixed(6)}`;
+      })
+      .join('\n');
+
+    const labelName = image.name.replace(/\.[^.]+$/, '.txt');
+    labelsFolder.file(labelName, lines);
+  }
+
+  const yaml = [
+    'path: .',
+    'train: images',
+    'val: images',
+    '',
+    `nc: ${ctx.classes.length}`,
+    'names:',
+    ...ctx.classes.map((c, idx) => `  ${idx}: '${c.name}'`),
+  ].join('\n');
+
+  root.file('data.yaml', yaml);
+}
+
+function writeCocoDataset(root: JSZip, ctx: ExportContext): void {
+  const imagesFolder = root.folder('images');
+  if (!imagesFolder) return;
+  for (const image of ctx.images) {
+    imagesFolder.file(image.name, image.file);
+  }
+
+  const round = (v: number, places: number): number => {
+    const m = 10 ** places;
+    return Math.round(v * m) / m;
+  };
+  const categories = ctx.classes.map((c, idx) => ({ id: idx + 1, name: c.name }));
+  const categoryById = new Map(ctx.classes.map((c, idx) => [c.id, idx + 1]));
+
+  let annId = 1;
+  const coco = {
+    info: {
+      description: `Export of ${ctx.images.length} images`,
+      version: '1.0',
+      year: new Date().getFullYear(),
+      date_created: new Date().toLocaleString('sv-SE'),
+    },
+    images: ctx.images.map((img, idx) => ({
+      id: idx + 1,
+      file_name: img.name,
+      width: img.width,
+      height: img.height,
+    })),
+    categories,
+    annotations: ctx.images.flatMap((img, idx) =>
+      img.annotations
+        .filter((a) => categoryById.has(a.classId))
+        .map((a) => ({
+          id: annId++,
+          image_id: idx + 1,
+          category_id: categoryById.get(a.classId),
+          bbox: [
+            round(a.bbox.x, 2),
+            round(a.bbox.y, 2),
+            round(a.bbox.width, 2),
+            round(a.bbox.height, 2),
+          ],
+          area: round(a.bbox.width * a.bbox.height, 4),
+          iscrowd: 0,
+        }))
+    ),
+  };
+
+  root.file('instances_default.json', JSON.stringify(coco, null, 2));
+}
+
+function writeVocDataset(root: JSZip, ctx: ExportContext): void {
+  const imagesFolder = root.folder('images');
+  const annotationsFolder = root.folder('annotations');
+  if (!imagesFolder || !annotationsFolder) return;
+
+  const classById = new Map(ctx.classes.map((c) => [c.id, c]));
+  for (const image of ctx.images) {
+    imagesFolder.file(image.name, image.file);
+    const objects = image.annotations
+      .filter((ann) => classById.has(ann.classId))
+      .map((ann) => ({
+        className: classById.get(ann.classId)?.name ?? FALLBACK_CLASS_NAME,
+        bbox: ann.bbox,
+      }));
+    const xml = buildVocAnnotationXml(image.name, image.width, image.height, objects);
+    const xmlName = image.name.replace(/\.[^.]+$/, '.xml');
+    annotationsFolder.file(xmlName, xml);
+  }
+}
+
+function sanitizeExportFolderName(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return 'annotation_exports';
+  const safe = trimmed
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120)
+    .trim();
+  return safe.length > 0 ? safe : 'annotation_exports';
 }
 
 function downloadBlob(blob: Blob, fileName: string): void {
@@ -798,6 +976,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           src: URL.createObjectURL(file),
           width: dims.width,
           height: dims.height,
+          isBookmarked: false,
           annotations: [],
           sourceKind: 'image',
         });
@@ -881,6 +1060,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         src: URL.createObjectURL(frame.file),
         width: parsed.probe.width,
         height: parsed.probe.height,
+        isBookmarked: false,
         annotations: [],
         sourceKind: 'videoFrame',
         videoMeta: {
@@ -1121,6 +1301,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           src,
           width: dims.width,
           height: dims.height,
+          isBookmarked: false,
           annotations,
           sourceKind: 'image',
         });
@@ -1227,6 +1408,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           src,
           width: dims.width,
           height: dims.height,
+          isBookmarked: false,
           annotations: [],
           sourceKind: 'image',
         };
@@ -1348,6 +1530,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           src,
           width: dims.width,
           height: dims.height,
+          isBookmarked: false,
           annotations,
           sourceKind: 'image',
         });
@@ -1444,7 +1627,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
         defaultView.imageSort
       ),
-      imageFilter: enumValue(rawSettings.imageFilter, ['none', 'hideAnnotated', 'hideUnannotated'] as const, defaultView.imageFilter),
+      imageFilter: enumValue(
+        rawSettings.imageFilter,
+        ['none', 'hideAnnotated', 'hideUnannotated', 'hideBookmarked', 'hideUnbookmarked'] as const,
+        defaultView.imageFilter
+      ),
       imageClassFilterMode: enumValue(
         rawSettings.imageClassFilterMode,
         ['none', 'hasAny', 'hasAll', 'hasNone'] as const,
@@ -1673,6 +1860,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         src: URL.createObjectURL(imageFile),
         width,
         height,
+        isBookmarked: asBoolean(rawImage.isBookmarked) ?? false,
         annotations,
         sourceKind,
         videoMeta,
@@ -1767,6 +1955,35 @@ export const useAppStore = create<AppState>((set, get) => ({
       deferredLastAnnotationId: null,
       deferredLastImageId: null,
     }),
+  toggleImageBookmark: (imageId) => {
+    const state = get();
+    const image = state.images.find((img) => img.id === imageId);
+    if (!image) return;
+    get().setImagesBookmarked([imageId], !image.isBookmarked);
+  },
+  setImagesBookmarked: (imageIds, bookmarked) => {
+    const state = get();
+    const idSet = new Set(imageIds);
+    if (idSet.size === 0) return;
+    const hasChanged = state.images.some((img) => idSet.has(img.id) && img.isBookmarked !== bookmarked);
+    if (!hasChanged) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) => (idSet.has(img.id) ? { ...img, isBookmarked: bookmarked } : img)),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
   selectClass: (classId) => {
     const state = get();
     if (!state.classes.some((c) => c.id === classId)) return;
@@ -2192,7 +2409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sourceIds.length === 0) return;
 
     const sourceSet = new Set(sourceIds);
-    const targetImageIds = scope === 'currentImage' ? [state.selectedImageId].filter(Boolean) as string[] : state.images.map((img) => img.id);
+    const targetImageIds = getImageIdsByScope(state.images, state.selectedImageId, scope);
     if (targetImageIds.length === 0) return;
     const targetImageIdSet = new Set(targetImageIds);
 
@@ -2236,7 +2453,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sourceIds.length === 0) return;
 
     const sourceSet = new Set(sourceIds);
-    const targetImageIds = scope === 'currentImage' ? [state.selectedImageId].filter(Boolean) as string[] : state.images.map((img) => img.id);
+    const targetImageIds = getImageIdsByScope(state.images, state.selectedImageId, scope);
     if (targetImageIds.length === 0) return;
     const targetImageIdSet = new Set(targetImageIds);
 
@@ -2290,10 +2507,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sourceIds.length === 0) return;
 
     const sourceSet = new Set(sourceIds);
-    const targetImageIds =
-      scope === 'currentImage'
-        ? ([state.selectedImageId].filter(Boolean) as string[])
-        : state.images.map((img) => img.id);
+    const targetImageIds = getImageIdsByScope(state.images, state.selectedImageId, scope);
     if (targetImageIds.length === 0) return;
     const targetImageIdSet = new Set(targetImageIds);
 
@@ -2338,10 +2552,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sourceIds.length === 0) return;
 
     const sourceSet = new Set(sourceIds);
-    const targetImageIds =
-      scope === 'currentImage'
-        ? ([state.selectedImageId].filter(Boolean) as string[])
-        : state.images.map((img) => img.id);
+    const targetImageIds = getImageIdsByScope(state.images, state.selectedImageId, scope);
     if (targetImageIds.length === 0) return;
     const targetImageIdSet = new Set(targetImageIds);
 
@@ -2822,6 +3033,46 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  removeAllBBoxesBookmarked: () => {
+    const state = get();
+    const bookmarkedImageIds = new Set(state.images.filter((img) => img.isBookmarked).map((img) => img.id));
+    if (bookmarkedImageIds.size === 0) return;
+    const hasAny = state.images.some(
+      (img) => bookmarkedImageIds.has(img.id) && img.annotations.length > 0
+    );
+    if (!hasAny) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => {
+      const images = s.images.map((img) =>
+        bookmarkedImageIds.has(img.id) ? { ...img, annotations: [] } : img
+      );
+      const selectedImage = images.find((img) => img.id === s.selectedImageId) ?? null;
+      const validSelectedIds = new Set((selectedImage?.annotations ?? []).map((ann) => ann.id));
+      const selectedAnnotationIds = s.selectedAnnotationIds.filter((id) => validSelectedIds.has(id));
+      const selectedAnnotationId =
+        s.selectedAnnotationId && validSelectedIds.has(s.selectedAnnotationId)
+          ? s.selectedAnnotationId
+          : selectedAnnotationIds[selectedAnnotationIds.length - 1] ?? null;
+      return {
+        images,
+        selectedAnnotationIds,
+        selectedAnnotationId,
+        undoStack: [...s.undoStack, cloneSnapshot(base)],
+        redoStack: [],
+      };
+    });
+  },
+
   // --- Whole-image visibility/anchoring toggles ---
   toggleAllAnchoringCurrentImage: () => {
     const state = get();
@@ -2941,6 +3192,43 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  toggleAllAnchoringBookmarked: () => {
+    const state = get();
+    const bookmarkedImageIds = new Set(state.images.filter((img) => img.isBookmarked).map((img) => img.id));
+    if (bookmarkedImageIds.size === 0) return;
+    const hasAny = state.images.some(
+      (img) => bookmarkedImageIds.has(img.id) && img.annotations.length > 0
+    );
+    if (!hasAny) return;
+    const hasUnanchored = state.images.some(
+      (img) => bookmarkedImageIds.has(img.id) && img.annotations.some((ann) => !ann.isAnchored)
+    );
+    const nextAnchored = hasUnanchored;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        !bookmarkedImageIds.has(img.id)
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((ann) => ({ ...ann, isAnchored: nextAnchored })),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
   toggleAllVisibilityGlobal: () => {
     const state = get();
     if (!state.images.some((i) => i.annotations.length > 0)) return;
@@ -2967,6 +3255,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
+  },
+
+  toggleAllVisibilityBookmarked: () => {
+    const state = get();
+    const bookmarkedImageIds = new Set(state.images.filter((img) => img.isBookmarked).map((img) => img.id));
+    if (bookmarkedImageIds.size === 0) return;
+    const hasAny = state.images.some(
+      (img) => bookmarkedImageIds.has(img.id) && img.annotations.length > 0
+    );
+    if (!hasAny) return;
+    const hasHidden = state.images.some(
+      (img) => bookmarkedImageIds.has(img.id) && img.annotations.some((ann) => !ann.isVisible)
+    );
+    const nextVisible = hasHidden;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => {
+      const images = s.images.map((img) =>
+        !bookmarkedImageIds.has(img.id)
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((ann) => ({ ...ann, isVisible: nextVisible })),
+            }
+      );
+      const selectedImage = images.find((img) => img.id === s.selectedImageId) ?? null;
+      const selectedMap = new Map((selectedImage?.annotations ?? []).map((ann) => [ann.id, ann]));
+      const selectedAnnotationIds = s.selectedAnnotationIds.filter(
+        (id) => selectedMap.get(id)?.isVisible ?? false
+      );
+      const selectedAnnotationId =
+        s.selectedAnnotationId && (selectedMap.get(s.selectedAnnotationId)?.isVisible ?? false)
+          ? s.selectedAnnotationId
+          : selectedAnnotationIds[selectedAnnotationIds.length - 1] ?? null;
+      return {
+        images,
+        selectedAnnotationIds,
+        selectedAnnotationId,
+        undoStack: [...s.undoStack, cloneSnapshot(base)],
+        redoStack: [],
+      };
+    });
   },
 
   // --- Navigation ---
@@ -3231,6 +3570,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         file: img.file,
         width: img.width,
         height: img.height,
+        isBookmarked: img.isBookmarked,
         sourceKind: img.sourceKind,
         videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
         annotations: img.annotations.map((ann) => ({
@@ -3304,6 +3644,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         src: URL.createObjectURL(file),
         width,
         height,
+        isBookmarked: Boolean(img.isBookmarked),
         annotations,
         sourceKind: img.sourceKind === 'videoFrame' ? 'videoFrame' : 'image',
         videoMeta: img.videoMeta ? { ...img.videoMeta } : undefined,
@@ -3370,152 +3711,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     downloadBlob(blob, 'classes.txt');
   },
 
-  exportAnnotations: async (format, global, includeFallback = false) => {
+  exportAnnotations: async (format, scope, includeFallback = false) => {
     const state = get();
+    const ctx = resolveExportContext(state, scope, includeFallback);
+    if (!ctx) return;
 
-    const selectedImage = state.images.find((i) => i.id === state.selectedImageId) ?? null;
-    const images = global ? state.images : selectedImage ? [selectedImage] : [];
-    if (images.length === 0) return;
+    const zip = new JSZip();
+    if (format === 'yolo') writeYoloDataset(zip, ctx);
+    if (format === 'coco') writeCocoDataset(zip, ctx);
+    if (format === 'voc') writeVocDataset(zip, ctx);
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, `dataset_${format}_${Date.now()}.zip`);
+  },
 
-    const hasAnyAnnotation = images.some((img) => img.annotations.length > 0);
-    let classes = state.classes.filter((c) => includeFallback || !c.isDefault);
-    if (classes.length === 0) return;
+  exportAllAnnotations: async (scope, folderName, includeFallback = false) => {
+    const state = get();
+    const ctx = resolveExportContext(state, scope, includeFallback);
+    if (!ctx) return;
 
-    let classMap = new Map(classes.map((c, idx) => [c.id, idx]));
-    const hasMappedAnnotation = images.some((img) => img.annotations.some((a) => classMap.has(a.classId)));
-    if (hasAnyAnnotation && !hasMappedAnnotation) {
-      // If all boxes are in fallback class, avoid producing empty exports.
-      classes = state.classes;
-      classMap = new Map(classes.map((c, idx) => [c.id, idx]));
-    }
+    const zip = new JSZip();
+    const rootName = sanitizeExportFolderName(folderName);
+    const root = zip.folder(rootName);
+    if (!root) return;
 
-    if (format === 'yolo') {
-      // YOLO export: images/ + labels/ + classes.txt + data.yaml.
-      const zip = new JSZip();
-      const imagesFolder = zip.folder('images');
-      const labelsFolder = zip.folder('labels');
+    const yolo = root.folder('yolo');
+    const coco = root.folder('coco');
+    const voc = root.folder('voc');
+    if (!yolo || !coco || !voc) return;
 
-      if (!imagesFolder || !labelsFolder) return;
+    writeYoloDataset(yolo, ctx);
+    writeCocoDataset(coco, ctx);
+    writeVocDataset(voc, ctx);
 
-      const classNames = classes.map((c) => c.name).join('\n');
-      zip.file('classes.txt', classNames);
-
-      for (const image of images) {
-        imagesFolder.file(image.name, image.file);
-
-        const lines = image.annotations
-          .filter((a) => classMap.has(a.classId))
-          .map((a) => {
-            const clsIdx = classMap.get(a.classId) ?? 0;
-            const cx = (a.bbox.x + a.bbox.width / 2) / image.width;
-            const cy = (a.bbox.y + a.bbox.height / 2) / image.height;
-            const w = a.bbox.width / image.width;
-            const h = a.bbox.height / image.height;
-            return `${clsIdx} ${cx.toFixed(6)} ${cy.toFixed(6)} ${w.toFixed(6)} ${h.toFixed(6)}`;
-          })
-          .join('\n');
-
-        const labelName = image.name.replace(/\.[^.]+$/, '.txt');
-        labelsFolder.file(labelName, lines);
-      }
-
-      const yaml = [
-        'path: .',
-        'train: images',
-        'val: images',
-        '',
-        `nc: ${classes.length}`,
-        'names:',
-        ...classes.map((c, idx) => `  ${idx}: '${c.name}'`),
-      ].join('\n');
-
-      zip.file('data.yaml', yaml);
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, `dataset_yolo_${Date.now()}.zip`);
-      return;
-    }
-
-    if (format === 'coco') {
-      // COCO export: instances JSON + images directory in one dataset zip.
-      const zip = new JSZip();
-      const imagesFolder = zip.folder('images');
-      if (!imagesFolder) return;
-      for (const image of images) {
-        imagesFolder.file(image.name, image.file);
-      }
-
-      const round = (v: number, places: number): number => {
-        const m = 10 ** places;
-        return Math.round(v * m) / m;
-      };
-
-      const categories = classes.map((c, idx) => ({ id: idx + 1, name: c.name }));
-      const categoryById = new Map(classes.map((c, idx) => [c.id, idx + 1]));
-
-      let annId = 1;
-      const coco = {
-        info: {
-          description: `Export of ${images.length} images`,
-          version: '1.0',
-          year: new Date().getFullYear(),
-          date_created: new Date().toLocaleString('sv-SE'),
-        },
-        images: images.map((img, idx) => ({
-          id: idx + 1,
-          file_name: img.name,
-          width: img.width,
-          height: img.height,
-        })),
-        categories,
-        annotations: images.flatMap((img, idx) =>
-          img.annotations
-            .filter((a) => categoryById.has(a.classId))
-            .map((a) => ({
-              id: annId++,
-              image_id: idx + 1,
-              category_id: categoryById.get(a.classId),
-              bbox: [
-                round(a.bbox.x, 2),
-                round(a.bbox.y, 2),
-                round(a.bbox.width, 2),
-                round(a.bbox.height, 2),
-              ],
-              area: round(a.bbox.width * a.bbox.height, 4),
-              iscrowd: 0,
-            }))
-        ),
-      };
-
-      zip.file('instances_default.json', JSON.stringify(coco, null, 2));
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, `dataset_coco_${Date.now()}.zip`);
-      return;
-    }
-
-    if (format === 'voc') {
-      // VOC export: images/ + annotations/*.xml Pascal VOC files.
-      const zip = new JSZip();
-      const imagesFolder = zip.folder('images');
-      const annotationsFolder = zip.folder('annotations');
-      if (!imagesFolder || !annotationsFolder) return;
-
-      const classById = new Map(classes.map((c) => [c.id, c]));
-      for (const image of images) {
-        imagesFolder.file(image.name, image.file);
-        const objects = image.annotations
-          .filter((ann) => classById.has(ann.classId))
-          .map((ann) => ({
-            className: classById.get(ann.classId)?.name ?? FALLBACK_CLASS_NAME,
-            bbox: ann.bbox,
-          }));
-        const xml = buildVocAnnotationXml(image.name, image.width, image.height, objects);
-        const xmlName = image.name.replace(/\.[^.]+$/, '.xml');
-        annotationsFolder.file(xmlName, xml);
-      }
-
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, `dataset_voc_${Date.now()}.zip`);
-    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, `${rootName}_${Date.now()}.zip`);
   },
 
   exportWorkspaceState: async () => {
@@ -3555,6 +3784,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         id: img.id,
         name: img.name,
         fileName: imageFileNameById[img.id] ?? img.name,
+        isBookmarked: img.isBookmarked,
         sourceKind: img.sourceKind ?? 'image',
         videoMeta: img.videoMeta
           ? {

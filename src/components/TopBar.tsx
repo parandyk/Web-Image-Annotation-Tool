@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
+import type { ImageScope } from '../domain/types';
 import { pickDirectoryFiles, pickImageFiles, pickSingleTextLikeFile, pickSingleVideoFile, pickSingleZipFile } from '../utils/files';
 import {
   DEFAULT_VIDEO_PARSE_OPTIONS,
@@ -41,6 +42,10 @@ type WorkspaceClassOperationDialog =
   | { type: 'anchoring'; selectedClassIds: string[]; search: string; value: 'anchor' | 'unanchor' }
   | { type: 'visibility'; selectedClassIds: string[]; search: string; value: 'show' | 'hide' };
 
+type ExportRequest =
+  | { kind: 'single'; format: 'yolo' | 'coco' | 'voc'; scope: ImageScope }
+  | { kind: 'allFormats'; scope: ImageScope; folderName: string };
+
 const DIGITS_ONLY_RE = /^\d*$/;
 const DECIMAL_RE = /^\d*(?:\.\d*)?$/;
 
@@ -77,7 +82,8 @@ export function TopBar(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, boolean | number | string> | null>(null);
   const [confirmCloseSettings, setConfirmCloseSettings] = useState(false);
-  const [pendingExport, setPendingExport] = useState<{ format: 'yolo' | 'coco' | 'voc'; global: boolean } | null>(null);
+  const [exportDialog, setExportDialog] = useState<ExportRequest | null>(null);
+  const [pendingExport, setPendingExport] = useState<ExportRequest | null>(null);
   const [confirmClearWorkspace, setConfirmClearWorkspace] = useState(false);
   const [videoImportDialog, setVideoImportDialog] = useState<VideoImportDialog | null>(null);
   const [videoInputDraft, setVideoInputDraft] = useState<VideoInputDraft | null>(null);
@@ -105,16 +111,20 @@ export function TopBar(): JSX.Element {
   const openClassFileText = useAppStore((s) => s.openClassFileText);
   const exportClassesTxt = useAppStore((s) => s.exportClassesTxt);
   const exportAnnotations = useAppStore((s) => s.exportAnnotations);
+  const exportAllAnnotations = useAppStore((s) => s.exportAllAnnotations);
   const exportWorkspaceState = useAppStore((s) => s.exportWorkspaceState);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
   const removeAllBBoxes = useAppStore((s) => s.removeAllBBoxes);
   const removeAllBBoxesGlobal = useAppStore((s) => s.removeAllBBoxesGlobal);
+  const removeAllBBoxesBookmarked = useAppStore((s) => s.removeAllBBoxesBookmarked);
   const removeLastBBox = useAppStore((s) => s.removeLastBBox);
   const toggleAllAnchoringCurrentImage = useAppStore((s) => s.toggleAllAnchoringCurrentImage);
   const toggleAllAnchoringGlobal = useAppStore((s) => s.toggleAllAnchoringGlobal);
+  const toggleAllAnchoringBookmarked = useAppStore((s) => s.toggleAllAnchoringBookmarked);
   const setAllVisibilityCurrentImage = useAppStore((s) => s.setAllVisibilityCurrentImage);
   const toggleAllVisibilityGlobal = useAppStore((s) => s.toggleAllVisibilityGlobal);
+  const toggleAllVisibilityBookmarked = useAppStore((s) => s.toggleAllVisibilityBookmarked);
   const swapClassInstances = useAppStore((s) => s.swapClassInstances);
   const removeClassInstances = useAppStore((s) => s.removeClassInstances);
   const setClassInstancesAnchoring = useAppStore((s) => s.setClassInstancesAnchoring);
@@ -157,10 +167,15 @@ export function TopBar(): JSX.Element {
   const setStatusText = useAppStore((s) => s.setStatusText);
 
   const hasImages = images.length > 0;
+  const hasBookmarkedImages = useMemo(() => images.some((img) => img.isBookmarked), [images]);
   const selectedImage = useMemo(() => images.find((img) => img.id === selectedImageId) ?? null, [images, selectedImageId]);
   const currentImageAnnotations = selectedImage?.annotations ?? [];
   const hasCurrentImageAnnotations = currentImageAnnotations.length > 0;
   const hasGlobalAnnotations = useMemo(() => images.some((img) => img.annotations.length > 0), [images]);
+  const hasBookmarkedAnnotations = useMemo(
+    () => images.some((img) => img.isBookmarked && img.annotations.length > 0),
+    [images]
+  );
   const selectedDialogClassSet = useMemo(
     () => new Set(workspaceClassDialog?.selectedClassIds ?? []),
     [workspaceClassDialog]
@@ -189,6 +204,14 @@ export function TopBar(): JSX.Element {
     if (workspaceClassDialog.selectedClassIds.length === 0) return false;
     const sourceSet = new Set(workspaceClassDialog.selectedClassIds);
     return images.some((img) => img.annotations.some((ann) => sourceSet.has(ann.classId)));
+  }, [images, workspaceClassDialog]);
+  const hasBookmarkedClassInstances = useMemo(() => {
+    if (!workspaceClassDialog) return false;
+    if (workspaceClassDialog.selectedClassIds.length === 0) return false;
+    const sourceSet = new Set(workspaceClassDialog.selectedClassIds);
+    return images.some(
+      (img) => img.isBookmarked && img.annotations.some((ann) => sourceSet.has(ann.classId))
+    );
   }, [images, workspaceClassDialog]);
 
   const onToggleCurrentImageVisibility = (): void => {
@@ -349,44 +372,57 @@ export function TopBar(): JSX.Element {
     closeSettingsDialog();
   };
 
-  const exportAnnotationGroups = useMemo(
-    () => [
-      {
-        id: 'coco',
-        label: 'COCO',
-        buttons: [
-          { id: 'local-coco', label: 'Export current image COCO', format: 'coco' as const, global: false },
-          { id: 'global-coco', label: 'Export all images COCO', format: 'coco' as const, global: true },
-        ],
-      },
-      {
-        id: 'yolo',
-        label: 'YOLO',
-        buttons: [
-          { id: 'local-yolo', label: 'Export current image YOLO', format: 'yolo' as const, global: false },
-          { id: 'global-yolo', label: 'Export all images YOLO', format: 'yolo' as const, global: true },
-        ],
-      },
-      {
-        id: 'voc',
-        label: 'VOC',
-        buttons: [
-          { id: 'local-voc', label: 'Export current image VOC', format: 'voc' as const, global: false },
-          { id: 'global-voc', label: 'Export all images VOC', format: 'voc' as const, global: true },
-        ],
-      },
-    ],
-    []
-  );
+  const hasImagesForScope = (scope: ImageScope): boolean => {
+    if (scope === 'currentImage') return Boolean(selectedImage);
+    if (scope === 'bookmarkedImages') return hasBookmarkedImages;
+    return hasImages;
+  };
 
-  const startExport = async (format: 'yolo' | 'coco' | 'voc', global: boolean): Promise<void> => {
-    // Unassigned-class warning can be bypassed globally via settings.
-    if (suppressUnassigned) {
-      await exportAnnotations(format, global, exportIncludeUnassigned);
+  const executeExportRequest = async (
+    request: ExportRequest,
+    includeFallback: boolean
+  ): Promise<void> => {
+    if (request.kind === 'single') {
+      await exportAnnotations(request.format, request.scope, includeFallback);
       return;
     }
-    setPendingExport({ format, global });
+    await exportAllAnnotations(request.scope, request.folderName, includeFallback);
+  };
+
+  const defaultExportScope = (): ImageScope => {
+    if (selectedImage) return 'currentImage';
+    if (hasBookmarkedImages) return 'bookmarkedImages';
+    return 'allImages';
+  };
+
+  const openSingleExportDialog = (format: 'yolo' | 'coco' | 'voc'): void => {
+    setExportDialog({ kind: 'single', format, scope: defaultExportScope() });
     closeMenus();
+  };
+
+  const openAllFormatsExportDialog = (): void => {
+    setExportDialog({ kind: 'allFormats', scope: defaultExportScope(), folderName: 'annotation_exports' });
+    closeMenus();
+  };
+
+  const confirmExportDialog = async (): Promise<void> => {
+    if (!exportDialog) return;
+    if (!hasImagesForScope(exportDialog.scope)) {
+      setStatusText('No images available for selected export scope.');
+      return;
+    }
+    if (exportDialog.kind === 'allFormats' && exportDialog.folderName.trim().length === 0) {
+      setStatusText('Provide a folder name for all-formats export.');
+      return;
+    }
+    const request = exportDialog;
+    setExportDialog(null);
+    // Unassigned-class warning can be bypassed globally via settings.
+    if (suppressUnassigned) {
+      await executeExportRequest(request, exportIncludeUnassigned);
+      return;
+    }
+    setPendingExport(request);
   };
 
   const onOpenImages = async (): Promise<void> => {
@@ -569,7 +605,7 @@ export function TopBar(): JSX.Element {
     });
   };
 
-  const runSwapInstances = (scope: 'global' | 'currentImage'): void => {
+  const runSwapInstances = (scope: 'currentImage' | 'bookmarkedImages' | 'allImages'): void => {
     if (!workspaceClassDialog || workspaceClassDialog.type !== 'swap') return;
     if (workspaceClassDialog.selectedClassIds.length === 0) {
       setStatusText('Select at least one source class.');
@@ -583,7 +619,7 @@ export function TopBar(): JSX.Element {
     setWorkspaceClassDialog(null);
   };
 
-  const runRemoveInstances = (scope: 'global' | 'currentImage'): void => {
+  const runRemoveInstances = (scope: 'currentImage' | 'bookmarkedImages' | 'allImages'): void => {
     if (!workspaceClassDialog || workspaceClassDialog.type !== 'remove') return;
     if (workspaceClassDialog.selectedClassIds.length === 0) {
       setStatusText('Select at least one class.');
@@ -593,7 +629,7 @@ export function TopBar(): JSX.Element {
     setWorkspaceClassDialog(null);
   };
 
-  const runAnchoringInstances = (scope: 'global' | 'currentImage'): void => {
+  const runAnchoringInstances = (scope: 'currentImage' | 'bookmarkedImages' | 'allImages'): void => {
     if (!workspaceClassDialog || workspaceClassDialog.type !== 'anchoring') return;
     if (workspaceClassDialog.selectedClassIds.length === 0) {
       setStatusText('Select at least one class.');
@@ -607,7 +643,7 @@ export function TopBar(): JSX.Element {
     setWorkspaceClassDialog(null);
   };
 
-  const runVisibilityInstances = (scope: 'global' | 'currentImage'): void => {
+  const runVisibilityInstances = (scope: 'currentImage' | 'bookmarkedImages' | 'allImages'): void => {
     if (!workspaceClassDialog || workspaceClassDialog.type !== 'visibility') return;
     if (workspaceClassDialog.selectedClassIds.length === 0) {
       setStatusText('Select at least one class.');
@@ -621,7 +657,7 @@ export function TopBar(): JSX.Element {
     setWorkspaceClassDialog(null);
   };
 
-  const runWorkspaceClassOperation = (scope: 'global' | 'currentImage'): void => {
+  const runWorkspaceClassOperation = (scope: 'currentImage' | 'bookmarkedImages' | 'allImages'): void => {
     if (!workspaceClassDialog) return;
     if (workspaceClassDialog.type === 'swap') {
       runSwapInstances(scope);
@@ -699,6 +735,12 @@ export function TopBar(): JSX.Element {
         return;
       }
 
+      if (exportDialog) {
+        e.preventDefault();
+        setExportDialog(null);
+        return;
+      }
+
       if (confirmCloseSettings) {
         e.preventDefault();
         setConfirmCloseSettings(false);
@@ -724,6 +766,7 @@ export function TopBar(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [
     confirmCloseSettings,
+    exportDialog,
     hasPendingSettingsChanges,
     settingsOpen,
     videoImportBusy,
@@ -732,13 +775,13 @@ export function TopBar(): JSX.Element {
   ]);
 
   useEffect(() => {
-    if (!settingsOpen && !videoImportDialog && !workspaceClassDialog) return;
+    if (!settingsOpen && !videoImportDialog && !workspaceClassDialog && !exportDialog && !pendingExport) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [settingsOpen, videoImportDialog, workspaceClassDialog]);
+  }, [settingsOpen, videoImportDialog, workspaceClassDialog, exportDialog, pendingExport]);
 
   useEffect(() => {
     if (!videoImportDialog) {
@@ -824,20 +867,18 @@ export function TopBar(): JSX.Element {
                 <button onClick={() => runAndClose(exportWorkspaceState)}>Export workspace state</button>
                 <button onClick={() => runAndClose(exportClassesTxt)}>Export classes</button>
                 <div className="menu-group-label menu-group-label-separator">Export annotations</div>
-                {exportAnnotationGroups.map((group) => (
-                  <div key={group.id} className="menu-subgroup">
-                    <div className="menu-subgroup-label">{group.label}</div>
-                    {group.buttons.map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => runAndClose(() => startExport(b.format, b.global))}
-                        disabled={!hasImages}
-                      >
-                        {b.label}
-                      </button>
-                    ))}
-                  </div>
-                ))}
+                <button onClick={openAllFormatsExportDialog} disabled={!hasImages}>
+                  Export all formats
+                </button>
+                <button onClick={() => openSingleExportDialog('coco')} disabled={!hasImages}>
+                  Export COCO
+                </button>
+                <button onClick={() => openSingleExportDialog('yolo')} disabled={!hasImages}>
+                  Export YOLO
+                </button>
+                <button onClick={() => openSingleExportDialog('voc')} disabled={!hasImages}>
+                  Export VOC
+                </button>
               </div>
             )}
           </div>
@@ -868,11 +909,20 @@ export function TopBar(): JSX.Element {
                 <button onClick={() => runAndClose(async () => removeAllBBoxesGlobal())} disabled={!hasGlobalAnnotations}>
                   Remove all annotations (global)
                 </button>
+                <button onClick={() => runAndClose(async () => removeAllBBoxesBookmarked())} disabled={!hasBookmarkedAnnotations}>
+                  Remove all annotations (bookmarked)
+                </button>
                 <button onClick={() => runAndClose(async () => toggleAllVisibilityGlobal())} disabled={!hasGlobalAnnotations}>
                   Toggle visibility (global)
                 </button>
+                <button onClick={() => runAndClose(async () => toggleAllVisibilityBookmarked())} disabled={!hasBookmarkedAnnotations}>
+                  Toggle visibility (bookmarked)
+                </button>
                 <button onClick={() => runAndClose(async () => toggleAllAnchoringGlobal())} disabled={!hasGlobalAnnotations}>
                   Toggle anchoring (global)
+                </button>
+                <button onClick={() => runAndClose(async () => toggleAllAnchoringBookmarked())} disabled={!hasBookmarkedAnnotations}>
+                  Toggle anchoring (bookmarked)
                 </button>
 
                 <div className="menu-group-label menu-group-label-separator">Workspace</div>
@@ -1314,7 +1364,17 @@ export function TopBar(): JSX.Element {
                     Apply selected image
                   </button>
                   <button
-                    onClick={() => runWorkspaceClassOperation('global')}
+                    onClick={() => runWorkspaceClassOperation('bookmarkedImages')}
+                    disabled={
+                      !hasBookmarkedClassInstances ||
+                      workspaceClassDialog.selectedClassIds.length === 0 ||
+                      (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget)
+                    }
+                  >
+                    Apply bookmarked images
+                  </button>
+                  <button
+                    onClick={() => runWorkspaceClassOperation('allImages')}
                     disabled={
                       !hasGlobalClassInstances ||
                       workspaceClassDialog.selectedClassIds.length === 0 ||
@@ -1329,6 +1389,74 @@ export function TopBar(): JSX.Element {
           </div>
         </div>
       )}
+      {exportDialog && (
+        <div className="modal-backdrop" onClick={() => setExportDialog(null)}>
+          <div className="modal-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-stack">
+              <section>
+                <h4>
+                  {exportDialog.kind === 'single'
+                    ? `Export ${exportDialog.format.toUpperCase()}`
+                    : 'Export all formats'}
+                </h4>
+                <p>Choose what image scope to export.</p>
+                <div className="row">
+                  <button
+                    className={exportDialog.scope === 'currentImage' ? 'active' : ''}
+                    onClick={() => setExportDialog((prev) => (prev ? { ...prev, scope: 'currentImage' } : prev))}
+                    disabled={!selectedImage}
+                  >
+                    Current image
+                  </button>
+                  <button
+                    className={exportDialog.scope === 'bookmarkedImages' ? 'active' : ''}
+                    onClick={() => setExportDialog((prev) => (prev ? { ...prev, scope: 'bookmarkedImages' } : prev))}
+                    disabled={!hasBookmarkedImages}
+                  >
+                    Bookmarked images
+                  </button>
+                  <button
+                    className={exportDialog.scope === 'allImages' ? 'active' : ''}
+                    onClick={() => setExportDialog((prev) => (prev ? { ...prev, scope: 'allImages' } : prev))}
+                    disabled={!hasImages}
+                  >
+                    All images
+                  </button>
+                </div>
+                {exportDialog.kind === 'allFormats' && (
+                  <label>
+                    Output folder name
+                    <input
+                      type="text"
+                      value={exportDialog.folderName}
+                      onChange={(e) =>
+                        setExportDialog((prev) =>
+                          prev && prev.kind === 'allFormats'
+                            ? { ...prev, folderName: e.target.value }
+                            : prev
+                        )
+                      }
+                      placeholder="annotation_exports"
+                    />
+                  </label>
+                )}
+                <div className="row dialog-actions">
+                  <button onClick={() => setExportDialog(null)}>Cancel</button>
+                  <button
+                    onClick={() => void confirmExportDialog()}
+                    disabled={
+                      !hasImagesForScope(exportDialog.scope) ||
+                      (exportDialog.kind === 'allFormats' && exportDialog.folderName.trim().length === 0)
+                    }
+                  >
+                    Continue
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingExport && (
         <div className="modal-backdrop" onClick={() => setPendingExport(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1336,6 +1464,16 @@ export function TopBar(): JSX.Element {
               <section>
                 <h4>Export warning</h4>
                 <p>
+                  {pendingExport.kind === 'single'
+                    ? `Format: ${pendingExport.format.toUpperCase()}. `
+                    : `Format: all (COCO, YOLO, VOC). Folder: ${pendingExport.folderName}. `}
+                  Export scope:{' '}
+                  {pendingExport.scope === 'currentImage'
+                    ? 'current image'
+                    : pendingExport.scope === 'bookmarkedImages'
+                      ? 'bookmarked images'
+                      : 'all images'}
+                  .{' '}
                   Unassigned class {exportIncludeUnassigned ? 'will be' : 'will not be'} exported.
                 </p>
                 <label className="inline-check">
@@ -1351,15 +1489,15 @@ export function TopBar(): JSX.Element {
                   <span>Don't ask again</span>
                 </label>
                 <div className="row dialog-actions">
+                  <button onClick={() => setPendingExport(null)}>Cancel</button>
                   <button
                     onClick={async () => {
-                      await exportAnnotations(pendingExport.format, pendingExport.global, exportIncludeUnassigned);
+                      await executeExportRequest(pendingExport, exportIncludeUnassigned);
                       setPendingExport(null);
                     }}
                   >
                     Continue
                   </button>
-                  <button onClick={() => setPendingExport(null)}>Cancel</button>
                 </div>
               </section>
             </div>
