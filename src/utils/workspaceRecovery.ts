@@ -18,6 +18,8 @@ export type WorkspaceRecoveryViewState = {
     | 'mostAnnotations'
     | 'fewestAnnotations';
   imageFilter: 'none' | 'hideAnnotated' | 'hideUnannotated';
+  imageClassFilterMode: 'none' | 'hasAny' | 'hasAll' | 'hasNone';
+  imageClassFilterClassIds: string[];
   annotationSort:
     | 'none'
     | 'oldest'

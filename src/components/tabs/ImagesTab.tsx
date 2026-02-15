@@ -86,12 +86,18 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   const [confirmDeleteImageIds, setConfirmDeleteImageIds] = useState<string[] | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [listMenu, setListMenu] = useState<{ type: 'image' | 'annotation'; id: string; x: number; y: number } | null>(null);
+  const [imageClassFilterMenu, setImageClassFilterMenu] = useState<{ x: number; y: number } | null>(null);
+  const [imageClassFilterSearch, setImageClassFilterSearch] = useState('');
   const [imageSearch, setImageSearch] = useState('');
   const [annotationSearch, setAnnotationSearch] = useState('');
   const hotkeyScopeRef = useRef<HTMLDivElement | null>(null);
   const listMenuRef = useRef<HTMLDivElement | null>(null);
+  const imageClassFilterMenuRef = useRef<HTMLDivElement | null>(null);
+  const imageClassFilterButtonRef = useRef<HTMLButtonElement | null>(null);
   const imageSort = useAppStore((s) => s.imageSort);
   const imageFilter = useAppStore((s) => s.imageFilter);
+  const imageClassFilterMode = useAppStore((s) => s.imageClassFilterMode);
+  const imageClassFilterClassIds = useAppStore((s) => s.imageClassFilterClassIds);
   const annotationSort = useAppStore((s) => s.annotationSort);
   const annotationFilter = useAppStore((s) => s.annotationFilter);
   const selectedImageId = useAppStore((s) => s.selectedImageId);
@@ -99,6 +105,8 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
 
   const setImageSort = useAppStore((s) => s.setImageSort);
   const setImageFilter = useAppStore((s) => s.setImageFilter);
+  const setImageClassFilterMode = useAppStore((s) => s.setImageClassFilterMode);
+  const setImageClassFilterClassIds = useAppStore((s) => s.setImageClassFilterClassIds);
   const setAnnotationSort = useAppStore((s) => s.setAnnotationSort);
   const setAnnotationFilter = useAppStore((s) => s.setAnnotationFilter);
 
@@ -157,6 +165,29 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   const canJumpToFirstAnnotation = canCycleAnnotations && annotationNavigationIndex > 0;
   const canJumpToLastAnnotation = canCycleAnnotations && annotationNavigationIndex < annotations.length - 1;
 
+  const selectedImageFilterClassSet = useMemo(
+    () => new Set(imageClassFilterClassIds),
+    [imageClassFilterClassIds]
+  );
+  const imageFilterClasses = useMemo(
+    () =>
+      classes.filter((cls) =>
+        cls.name.toLowerCase().includes(imageClassFilterSearch.trim().toLowerCase())
+      ),
+    [classes, imageClassFilterSearch]
+  );
+  const selectedImageFilterClassNames = useMemo(
+    () =>
+      classes
+        .filter((cls) => selectedImageFilterClassSet.has(cls.id))
+        .map((cls) => cls.name),
+    [classes, selectedImageFilterClassSet]
+  );
+  const imageClassFilterSummary =
+    selectedImageFilterClassNames.length === 0
+      ? 'All classes'
+      : selectedImageFilterClassNames.join(', ');
+
   const selectedAnnotationIdsForCurrentImage = useMemo(() => {
     const available = new Set(annotations.map((ann) => ann.id));
     return selectedAnnotationIds.filter((id) => available.has(id));
@@ -172,6 +203,14 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
       return next.length === prev.length ? prev : next;
     });
   }, [images]);
+
+  useEffect(() => {
+    const validClassIds = new Set(classes.map((cls) => cls.id));
+    const next = imageClassFilterClassIds.filter((classId) => validClassIds.has(classId));
+    if (next.length !== imageClassFilterClassIds.length) {
+      setImageClassFilterClassIds(next);
+    }
+  }, [classes, imageClassFilterClassIds, setImageClassFilterClassIds]);
 
   useEffect(() => {
     if (!listMenu) return;
@@ -213,6 +252,52 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [listMenu]);
+
+  useEffect(() => {
+    if (!imageClassFilterMenu) return;
+    const closeDistancePx = 240;
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target as Node;
+      if (imageClassFilterMenuRef.current?.contains(target)) return;
+      if (imageClassFilterButtonRef.current?.contains(target)) return;
+      setImageClassFilterMenu(null);
+    };
+    const onPointerMove = (e: PointerEvent): void => {
+      const menuEl = imageClassFilterMenuRef.current;
+      const buttonEl = imageClassFilterButtonRef.current;
+      if (!menuEl) return;
+      const px = e.clientX;
+      const py = e.clientY;
+
+      const withinRect = (rect: DOMRect): boolean =>
+        px >= rect.left - 12 &&
+        px <= rect.right + 12 &&
+        py >= rect.top - 12 &&
+        py <= rect.bottom + 12;
+
+      if (withinRect(menuEl.getBoundingClientRect())) return;
+      if (buttonEl && withinRect(buttonEl.getBoundingClientRect())) return;
+
+      const rect = menuEl.getBoundingClientRect();
+      const nearestX = Math.max(rect.left, Math.min(px, rect.right));
+      const nearestY = Math.max(rect.top, Math.min(py, rect.bottom));
+      if (Math.hypot(px - nearestX, py - nearestY) > closeDistancePx) {
+        setImageClassFilterMenu(null);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      setImageClassFilterMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove, true);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [imageClassFilterMenu]);
 
   const deleteAnnotationIdsWithWarning = (ids: string[]): void => {
     if (ids.length === 0) return;
@@ -292,6 +377,14 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     selectAnnotation(annotations[annotations.length - 1].id);
   };
 
+  const toggleImageClassFilterClass = (classId: string): void => {
+    if (selectedImageFilterClassSet.has(classId)) {
+      setImageClassFilterClassIds(imageClassFilterClassIds.filter((id) => id !== classId));
+      return;
+    }
+    setImageClassFilterClassIds([...imageClassFilterClassIds, classId]);
+  };
+
   const imagesPanel = (
     // Image panel: navigation + filtered list + multi-select + bulk delete context menu.
     <section className="split-panel">
@@ -325,6 +418,43 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
           <option value="hideAnnotated">Hide Annotated</option>
           <option value="hideUnannotated">Hide Unannotated</option>
         </select>
+      </label>
+      <label>
+        Class filter
+        <select
+          value={imageClassFilterMode}
+          onChange={(e) => setImageClassFilterMode(e.target.value as typeof imageClassFilterMode)}
+        >
+          <option value="none">None</option>
+          <option value="hasAny">Has any selected</option>
+          <option value="hasAll">Has all selected</option>
+          <option value="hasNone">Has none selected</option>
+        </select>
+        <div className="row class-filter-row">
+          <button
+            ref={imageClassFilterButtonRef}
+            type="button"
+            className="grow class-filter-picker-btn"
+            title={imageClassFilterSummary}
+            onClick={(e) => {
+              if (imageClassFilterMenu) {
+                setImageClassFilterMenu(null);
+                return;
+              }
+              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+              setImageClassFilterMenu({ x: rect.left, y: rect.bottom + 6 });
+            }}
+          >
+            <MiddleTruncate text={imageClassFilterSummary} className="truncate-mid" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setImageClassFilterClassIds([])}
+            disabled={imageClassFilterClassIds.length === 0}
+          >
+            Clear
+          </button>
+        </div>
       </label>
       <label>
         Search
@@ -572,6 +702,64 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
         {view === 'images' && <div className="panel-stack">{imagesPanel}</div>}
         {view === 'annotations' && <div className="panel-stack">{annotationsPanel}</div>}
       </div>
+
+      {imageClassFilterMenu && (
+        <PortalMenu
+          x={imageClassFilterMenu.x}
+          y={imageClassFilterMenu.y}
+          menuRef={imageClassFilterMenuRef}
+          className="annotation-menu class-filter-menu"
+        >
+          <label>
+            Search classes
+            <input
+              type="text"
+              value={imageClassFilterSearch}
+              onChange={(e) => setImageClassFilterSearch(e.target.value)}
+              placeholder="Filter classes"
+            />
+          </label>
+          <div className="class-filter-actions">
+            <button
+              type="button"
+              onClick={() => {
+                const visibleIds = imageFilterClasses.map((cls) => cls.id);
+                if (visibleIds.length === 0) return;
+                setImageClassFilterClassIds([...new Set([...imageClassFilterClassIds, ...visibleIds])]);
+              }}
+              disabled={imageFilterClasses.length === 0}
+            >
+              Select all visible
+            </button>
+            <button
+              type="button"
+              onClick={() => setImageClassFilterClassIds([])}
+              disabled={imageClassFilterClassIds.length === 0}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="class-filter-list">
+            {imageFilterClasses.length === 0 && (
+              <div className="class-filter-empty">No matching classes.</div>
+            )}
+            {imageFilterClasses.map((cls) => (
+              <button
+                key={cls.id}
+                type="button"
+                className={`class-filter-option ${selectedImageFilterClassSet.has(cls.id) ? 'selected' : ''}`}
+                onClick={() => toggleImageClassFilterClass(cls.id)}
+              >
+                <span className="class-filter-check" aria-hidden="true">
+                  {selectedImageFilterClassSet.has(cls.id) ? '✓' : ''}
+                </span>
+                <span className="color-dot" style={{ background: cls.color }} />
+                <span className="class-filter-option-name">{cls.name}</span>
+              </button>
+            ))}
+          </div>
+        </PortalMenu>
+      )}
 
       {listMenu && (
         <PortalMenu x={listMenu.x} y={listMenu.y} menuRef={listMenuRef}>

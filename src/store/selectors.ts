@@ -18,7 +18,10 @@ export function useSelectedImage(): ImageItem | null {
 
 export function useSortedFilteredImages(): ImageItem[] {
   const images = useAppStore((s) => s.images);
+  const classes = useAppStore((s) => s.classes);
   const imageFilter = useAppStore((s) => s.imageFilter);
+  const imageClassFilterMode = useAppStore((s) => s.imageClassFilterMode);
+  const imageClassFilterClassIds = useAppStore((s) => s.imageClassFilterClassIds);
   const imageSort = useAppStore((s) => s.imageSort);
 
   return useMemo(() => {
@@ -31,6 +34,24 @@ export function useSortedFilteredImages(): ImageItem[] {
 
     if (imageFilter === 'hideUnannotated') {
       list = list.filter((i) => i.annotations.length > 0);
+    }
+
+    const validClassIds = new Set(classes.map((c) => c.id));
+    const selectedClassIds = imageClassFilterClassIds.filter((classId) => validClassIds.has(classId));
+    if (imageClassFilterMode !== 'none' && selectedClassIds.length > 0) {
+      list = list.filter((image) => {
+        const imageClassIds = new Set(image.annotations.map((ann) => ann.classId));
+        if (imageClassFilterMode === 'hasAny') {
+          return selectedClassIds.some((classId) => imageClassIds.has(classId));
+        }
+        if (imageClassFilterMode === 'hasAll') {
+          return selectedClassIds.every((classId) => imageClassIds.has(classId));
+        }
+        if (imageClassFilterMode === 'hasNone') {
+          return selectedClassIds.every((classId) => !imageClassIds.has(classId));
+        }
+        return true;
+      });
     }
 
     switch (imageSort) {
@@ -57,7 +78,7 @@ export function useSortedFilteredImages(): ImageItem[] {
     }
 
     return list;
-  }, [images, imageFilter, imageSort]);
+  }, [classes, imageClassFilterClassIds, imageClassFilterMode, images, imageFilter, imageSort]);
 }
 
 export function useSortedFilteredAnnotations(image: ImageItem | null): Annotation[] {

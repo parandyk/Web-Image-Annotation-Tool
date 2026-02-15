@@ -11,6 +11,7 @@ import {
   ClassFilterMode,
   ClassSortMode,
   ExportAnnotationFormat,
+  ImageClassFilterMode,
   ImageFilterMode,
   ImageItem,
   ImageSortMode,
@@ -40,6 +41,8 @@ type ViewState = {
   classAssignmentMode: AnnotationClassAssignmentMode;
   imageSort: ImageSortMode;
   imageFilter: ImageFilterMode;
+  imageClassFilterMode: ImageClassFilterMode;
+  imageClassFilterClassIds: string[];
   annotationSort: AnnotationSortMode;
   annotationFilter: AnnotationFilterMode;
   classSort: ClassSortMode;
@@ -81,6 +84,8 @@ type AppState = ViewState & {
   setClassAssignmentMode: (mode: AnnotationClassAssignmentMode) => void;
   setImageSort: (mode: ImageSortMode) => void;
   setImageFilter: (mode: ImageFilterMode) => void;
+  setImageClassFilterMode: (mode: ImageClassFilterMode) => void;
+  setImageClassFilterClassIds: (classIds: string[]) => void;
   setAnnotationSort: (mode: AnnotationSortMode) => void;
   setAnnotationFilter: (mode: AnnotationFilterMode) => void;
   setClassSort: (mode: ClassSortMode) => void;
@@ -535,6 +540,8 @@ function getDefaultViewState(): ViewState {
     classAssignmentMode: 'activeClass',
     imageSort: 'none',
     imageFilter: 'none',
+    imageClassFilterMode: 'none',
+    imageClassFilterClassIds: [],
     annotationSort: 'none',
     annotationFilter: 'none',
     classSort: 'none',
@@ -562,6 +569,8 @@ function toViewStateSnapshot(state: ViewState): ViewState {
     classAssignmentMode: state.classAssignmentMode,
     imageSort: state.imageSort,
     imageFilter: state.imageFilter,
+    imageClassFilterMode: state.imageClassFilterMode,
+    imageClassFilterClassIds: [...state.imageClassFilterClassIds],
     annotationSort: state.annotationSort,
     annotationFilter: state.annotationFilter,
     classSort: state.classSort,
@@ -588,6 +597,10 @@ function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | nu
     typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
   const pickBool = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback);
   const pickNum = (value: unknown, fallback: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+  const pickStringArray = (value: unknown, fallback: string[]): string[] =>
+    Array.isArray(value)
+      ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string'))]
+      : fallback;
   const source = raw ?? {};
   return {
     interactionMode: pickEnum(source.interactionMode, ['add', 'edit'] as const, defaults.interactionMode),
@@ -599,6 +612,12 @@ function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | nu
       defaults.imageSort
     ),
     imageFilter: pickEnum(source.imageFilter, ['none', 'hideAnnotated', 'hideUnannotated'] as const, defaults.imageFilter),
+    imageClassFilterMode: pickEnum(
+      source.imageClassFilterMode,
+      ['none', 'hasAny', 'hasAll', 'hasNone'] as const,
+      defaults.imageClassFilterMode
+    ),
+    imageClassFilterClassIds: pickStringArray(source.imageClassFilterClassIds, defaults.imageClassFilterClassIds),
     annotationSort: pickEnum(
       source.annotationSort,
       ['none', 'oldest', 'newest', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst'] as const,
@@ -719,6 +738,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   setImageSort: (mode) => set({ imageSort: mode }),
   setImageFilter: (mode) => set({ imageFilter: mode }),
+  setImageClassFilterMode: (mode) => set({ imageClassFilterMode: mode }),
+  setImageClassFilterClassIds: (classIds) =>
+    set({
+      imageClassFilterClassIds: [...new Set(classIds.filter((id): id is string => typeof id === 'string' && id.length > 0))],
+    }),
   setAnnotationSort: (mode) => set({ annotationSort: mode }),
   setAnnotationFilter: (mode) => set({ annotationFilter: mode }),
   setClassSort: (mode) => set({ classSort: mode }),
@@ -1390,6 +1414,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const asNumber = (value: unknown): number | null =>
       typeof value === 'number' && Number.isFinite(value) ? value : null;
     const asBoolean = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
+    const asStringArray = (value: unknown): string[] | null =>
+      Array.isArray(value)
+        ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))]
+        : null;
     const enumValue = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
       typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
     const clampValue = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
@@ -1411,6 +1439,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         defaultView.imageSort
       ),
       imageFilter: enumValue(rawSettings.imageFilter, ['none', 'hideAnnotated', 'hideUnannotated'] as const, defaultView.imageFilter),
+      imageClassFilterMode: enumValue(
+        rawSettings.imageClassFilterMode,
+        ['none', 'hasAny', 'hasAll', 'hasNone'] as const,
+        defaultView.imageClassFilterMode
+      ),
+      imageClassFilterClassIds: asStringArray(rawSettings.imageClassFilterClassIds) ?? defaultView.imageClassFilterClassIds,
       annotationSort: enumValue(
         rawSettings.annotationSort,
         ['none', 'oldest', 'newest', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst'] as const,

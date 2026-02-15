@@ -61,6 +61,7 @@ export type AnnotationSortMode =
   | 'smallestFirst';
 
 export type ImageFilterMode = 'none' | 'hideAnnotated' | 'hideUnannotated';
+export type ImageClassFilterMode = 'none' | 'hasAny' | 'hasAll' | 'hasNone';
 export type ImageSortMode =
   | 'none'
   | 'alphabetical'
