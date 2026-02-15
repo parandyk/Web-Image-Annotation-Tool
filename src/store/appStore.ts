@@ -62,6 +62,8 @@ type ViewState = {
   dragDeadzonePx: number;
 };
 
+type ClassInstanceScope = 'global' | 'currentImage';
+
 type AppState = ViewState & {
   statusText: string | null;
   classes: ClassData[];
@@ -131,6 +133,10 @@ type AppState = ViewState & {
   swapClassInstancesGlobal: (classId: string, substituteClassId: string) => void;
   removeClassInstancesGlobal: (classId: string) => void;
   toggleClassInstancesAnchoringGlobal: (classId: string) => void;
+  swapClassInstances: (classIds: string[], substituteClassId: string, scope: ClassInstanceScope) => void;
+  removeClassInstances: (classIds: string[], scope: ClassInstanceScope) => void;
+  setClassInstancesAnchoring: (classIds: string[], anchored: boolean, scope: ClassInstanceScope) => void;
+  setClassInstancesVisibility: (classIds: string[], visible: boolean, scope: ClassInstanceScope) => void;
 
   addAnnotation: (bbox: BBox) => void;
   updateAnnotationBBox: (annotationId: string, bbox: BBox) => void;
@@ -2174,6 +2180,216 @@ export const useAppStore = create<AppState>((set, get) => ({
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
     }));
+  },
+
+  swapClassInstances: (classIds, substituteClassId, scope) => {
+    const state = get();
+    if (!state.classes.some((c) => c.id === substituteClassId)) return;
+
+    const sourceIds = [...new Set(classIds)]
+      .filter((classId) => classId !== substituteClassId)
+      .filter((classId) => state.classes.some((c) => c.id === classId));
+    if (sourceIds.length === 0) return;
+
+    const sourceSet = new Set(sourceIds);
+    const targetImageIds = scope === 'currentImage' ? [state.selectedImageId].filter(Boolean) as string[] : state.images.map((img) => img.id);
+    if (targetImageIds.length === 0) return;
+    const targetImageIdSet = new Set(targetImageIds);
+
+    const hasAffected = state.images.some(
+      (img) =>
+        targetImageIdSet.has(img.id) && img.annotations.some((ann) => sourceSet.has(ann.classId))
+    );
+    if (!hasAffected) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        !targetImageIdSet.has(img.id)
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((ann) =>
+                sourceSet.has(ann.classId) ? { ...ann, classId: substituteClassId } : ann
+              ),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  removeClassInstances: (classIds, scope) => {
+    const state = get();
+    const sourceIds = [...new Set(classIds)].filter((classId) =>
+      state.classes.some((c) => c.id === classId)
+    );
+    if (sourceIds.length === 0) return;
+
+    const sourceSet = new Set(sourceIds);
+    const targetImageIds = scope === 'currentImage' ? [state.selectedImageId].filter(Boolean) as string[] : state.images.map((img) => img.id);
+    if (targetImageIds.length === 0) return;
+    const targetImageIdSet = new Set(targetImageIds);
+
+    const hasAffected = state.images.some(
+      (img) =>
+        targetImageIdSet.has(img.id) && img.annotations.some((ann) => sourceSet.has(ann.classId))
+    );
+    if (!hasAffected) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => {
+      const images = s.images.map((img) =>
+        !targetImageIdSet.has(img.id)
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.filter((ann) => !sourceSet.has(ann.classId)),
+            }
+      );
+      const selectedImage = images.find((img) => img.id === s.selectedImageId);
+      const validSelectedIds = new Set((selectedImage?.annotations ?? []).map((ann) => ann.id));
+      const selectedAnnotationIds = s.selectedAnnotationIds.filter((id) => validSelectedIds.has(id));
+      const selectedAnnotationId =
+        s.selectedAnnotationId && validSelectedIds.has(s.selectedAnnotationId)
+          ? s.selectedAnnotationId
+          : selectedAnnotationIds[0] ?? null;
+      return {
+        images,
+        selectedAnnotationIds,
+        selectedAnnotationId,
+        undoStack: [...s.undoStack, cloneSnapshot(base)],
+        redoStack: [],
+      };
+    });
+  },
+
+  setClassInstancesAnchoring: (classIds, anchored, scope) => {
+    const state = get();
+    const sourceIds = [...new Set(classIds)].filter((classId) =>
+      state.classes.some((c) => c.id === classId)
+    );
+    if (sourceIds.length === 0) return;
+
+    const sourceSet = new Set(sourceIds);
+    const targetImageIds =
+      scope === 'currentImage'
+        ? ([state.selectedImageId].filter(Boolean) as string[])
+        : state.images.map((img) => img.id);
+    if (targetImageIds.length === 0) return;
+    const targetImageIdSet = new Set(targetImageIds);
+
+    const hasAffected = state.images.some(
+      (img) =>
+        targetImageIdSet.has(img.id) &&
+        img.annotations.some((ann) => sourceSet.has(ann.classId) && ann.isAnchored !== anchored)
+    );
+    if (!hasAffected) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        !targetImageIdSet.has(img.id)
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((ann) =>
+                sourceSet.has(ann.classId) ? { ...ann, isAnchored: anchored } : ann
+              ),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  setClassInstancesVisibility: (classIds, visible, scope) => {
+    const state = get();
+    const sourceIds = [...new Set(classIds)].filter((classId) =>
+      state.classes.some((c) => c.id === classId)
+    );
+    if (sourceIds.length === 0) return;
+
+    const sourceSet = new Set(sourceIds);
+    const targetImageIds =
+      scope === 'currentImage'
+        ? ([state.selectedImageId].filter(Boolean) as string[])
+        : state.images.map((img) => img.id);
+    if (targetImageIds.length === 0) return;
+    const targetImageIdSet = new Set(targetImageIds);
+
+    const hasAffected = state.images.some(
+      (img) =>
+        targetImageIdSet.has(img.id) &&
+        img.annotations.some((ann) => sourceSet.has(ann.classId) && ann.isVisible !== visible)
+    );
+    if (!hasAffected) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => {
+      const images = s.images.map((img) =>
+        !targetImageIdSet.has(img.id)
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((ann) =>
+                sourceSet.has(ann.classId) ? { ...ann, isVisible: visible } : ann
+              ),
+            }
+      );
+      const selectedImage = images.find((img) => img.id === s.selectedImageId);
+      const selectedMap = new Map((selectedImage?.annotations ?? []).map((ann) => [ann.id, ann]));
+      const selectedAnnotationIds = s.selectedAnnotationIds.filter(
+        (id) => selectedMap.get(id)?.isVisible ?? false
+      );
+      const selectedAnnotationId =
+        s.selectedAnnotationId && (selectedMap.get(s.selectedAnnotationId)?.isVisible ?? false)
+          ? s.selectedAnnotationId
+          : selectedAnnotationIds[selectedAnnotationIds.length - 1] ?? null;
+      return {
+        images,
+        selectedAnnotationIds,
+        selectedAnnotationId,
+        undoStack: [...s.undoStack, cloneSnapshot(base)],
+        redoStack: [],
+      };
+    });
   },
 
   // --- Annotation management ---

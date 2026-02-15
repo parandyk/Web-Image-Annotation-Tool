@@ -34,6 +34,13 @@ type VideoInputDraft = {
   maxFrames: string;
 };
 
+type WorkspaceClassOperationDialog =
+  | null
+  | { type: 'swap'; selectedClassIds: string[]; targetClassId: string; search: string }
+  | { type: 'remove'; selectedClassIds: string[]; search: string }
+  | { type: 'anchoring'; selectedClassIds: string[]; search: string; value: 'anchor' | 'unanchor' }
+  | { type: 'visibility'; selectedClassIds: string[]; search: string; value: 'show' | 'hide' };
+
 const DIGITS_ONLY_RE = /^\d*$/;
 const DECIMAL_RE = /^\d*(?:\.\d*)?$/;
 
@@ -75,6 +82,7 @@ export function TopBar(): JSX.Element {
   const [videoImportDialog, setVideoImportDialog] = useState<VideoImportDialog | null>(null);
   const [videoInputDraft, setVideoInputDraft] = useState<VideoInputDraft | null>(null);
   const [videoImportBusy, setVideoImportBusy] = useState(false);
+  const [workspaceClassDialog, setWorkspaceClassDialog] = useState<WorkspaceClassOperationDialog>(null);
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const buttonRefs = useRef<Record<MenuId, HTMLButtonElement | null>>({
     open: null,
@@ -107,6 +115,11 @@ export function TopBar(): JSX.Element {
   const toggleAllAnchoringGlobal = useAppStore((s) => s.toggleAllAnchoringGlobal);
   const setAllVisibilityCurrentImage = useAppStore((s) => s.setAllVisibilityCurrentImage);
   const toggleAllVisibilityGlobal = useAppStore((s) => s.toggleAllVisibilityGlobal);
+  const swapClassInstances = useAppStore((s) => s.swapClassInstances);
+  const removeClassInstances = useAppStore((s) => s.removeClassInstances);
+  const setClassInstancesAnchoring = useAppStore((s) => s.setClassInstancesAnchoring);
+  const setClassInstancesVisibility = useAppStore((s) => s.setClassInstancesVisibility);
+  const classes = useAppStore((s) => s.classes);
   const images = useAppStore((s) => s.images);
   const selectedImageId = useAppStore((s) => s.selectedImageId);
   const interactionMode = useAppStore((s) => s.interactionMode);
@@ -148,6 +161,35 @@ export function TopBar(): JSX.Element {
   const currentImageAnnotations = selectedImage?.annotations ?? [];
   const hasCurrentImageAnnotations = currentImageAnnotations.length > 0;
   const hasGlobalAnnotations = useMemo(() => images.some((img) => img.annotations.length > 0), [images]);
+  const selectedDialogClassSet = useMemo(
+    () => new Set(workspaceClassDialog?.selectedClassIds ?? []),
+    [workspaceClassDialog]
+  );
+  const workspaceDialogClasses = useMemo(() => {
+    const query = workspaceClassDialog?.search.trim().toLowerCase() ?? '';
+    if (!query) return classes;
+    return classes.filter((cls) => cls.name.toLowerCase().includes(query));
+  }, [classes, workspaceClassDialog]);
+  const workspaceDialogSwapTargets = useMemo(() => {
+    if (!workspaceClassDialog || workspaceClassDialog.type !== 'swap') return [];
+    return classes.filter((cls) => !selectedDialogClassSet.has(cls.id));
+  }, [classes, selectedDialogClassSet, workspaceClassDialog]);
+  const hasValidSwapTarget =
+    workspaceClassDialog?.type === 'swap' &&
+    workspaceDialogSwapTargets.some((cls) => cls.id === workspaceClassDialog.targetClassId);
+  const hasSelectedImageForClassOps = Boolean(selectedImageId);
+  const hasSelectedImageClassInstances = useMemo(() => {
+    if (!workspaceClassDialog || !selectedImage) return false;
+    if (workspaceClassDialog.selectedClassIds.length === 0) return false;
+    const sourceSet = new Set(workspaceClassDialog.selectedClassIds);
+    return selectedImage.annotations.some((ann) => sourceSet.has(ann.classId));
+  }, [selectedImage, workspaceClassDialog]);
+  const hasGlobalClassInstances = useMemo(() => {
+    if (!workspaceClassDialog) return false;
+    if (workspaceClassDialog.selectedClassIds.length === 0) return false;
+    const sourceSet = new Set(workspaceClassDialog.selectedClassIds);
+    return images.some((img) => img.annotations.some((ann) => sourceSet.has(ann.classId)));
+  }, [images, workspaceClassDialog]);
 
   const onToggleCurrentImageVisibility = (): void => {
     if (currentImageAnnotations.length === 0) return;
@@ -439,6 +481,163 @@ export function TopBar(): JSX.Element {
     closeMenus();
   };
 
+  const openSwapInstancesDialog = (): void => {
+    const firstClassId = classes[0]?.id ?? '';
+    setWorkspaceClassDialog({
+      type: 'swap',
+      selectedClassIds: [],
+      targetClassId: firstClassId,
+      search: '',
+    });
+    closeMenus();
+  };
+
+  const openRemoveInstancesDialog = (): void => {
+    setWorkspaceClassDialog({
+      type: 'remove',
+      selectedClassIds: [],
+      search: '',
+    });
+    closeMenus();
+  };
+
+  const openAnchoringInstancesDialog = (): void => {
+    setWorkspaceClassDialog({
+      type: 'anchoring',
+      selectedClassIds: [],
+      search: '',
+      value: 'anchor',
+    });
+    closeMenus();
+  };
+
+  const openVisibilityInstancesDialog = (): void => {
+    setWorkspaceClassDialog({
+      type: 'visibility',
+      selectedClassIds: [],
+      search: '',
+      value: 'show',
+    });
+    closeMenus();
+  };
+
+  const toggleWorkspaceDialogClass = (classId: string): void => {
+    setWorkspaceClassDialog((prev) => {
+      if (!prev) return prev;
+      const exists = prev.selectedClassIds.includes(classId);
+      const selectedClassIds = exists
+        ? prev.selectedClassIds.filter((id) => id !== classId)
+        : [...prev.selectedClassIds, classId];
+      if (prev.type !== 'swap') {
+        return { ...prev, selectedClassIds };
+      }
+      const swapTargets = classes.filter((cls) => !selectedClassIds.includes(cls.id));
+      const targetClassId = swapTargets.some((cls) => cls.id === prev.targetClassId)
+        ? prev.targetClassId
+        : swapTargets[0]?.id ?? '';
+      return { ...prev, selectedClassIds, targetClassId };
+    });
+  };
+
+  const selectAllVisibleDialogClasses = (): void => {
+    setWorkspaceClassDialog((prev) => {
+      if (!prev) return prev;
+      const query = prev.search.trim().toLowerCase();
+      const visibleClassIds = classes
+        .filter((cls) => cls.name.toLowerCase().includes(query))
+        .map((cls) => cls.id);
+      const selectedClassIds = [...new Set([...prev.selectedClassIds, ...visibleClassIds])];
+      if (prev.type !== 'swap') {
+        return { ...prev, selectedClassIds };
+      }
+      const swapTargets = classes.filter((cls) => !selectedClassIds.includes(cls.id));
+      const targetClassId = swapTargets.some((cls) => cls.id === prev.targetClassId)
+        ? prev.targetClassId
+        : swapTargets[0]?.id ?? '';
+      return { ...prev, selectedClassIds, targetClassId };
+    });
+  };
+
+  const clearDialogClassSelection = (): void => {
+    setWorkspaceClassDialog((prev) => {
+      if (!prev) return prev;
+      if (prev.type !== 'swap') {
+        return { ...prev, selectedClassIds: [] };
+      }
+      const firstClassId = classes[0]?.id ?? '';
+      return { ...prev, selectedClassIds: [], targetClassId: firstClassId };
+    });
+  };
+
+  const runSwapInstances = (scope: 'global' | 'currentImage'): void => {
+    if (!workspaceClassDialog || workspaceClassDialog.type !== 'swap') return;
+    if (workspaceClassDialog.selectedClassIds.length === 0) {
+      setStatusText('Select at least one source class.');
+      return;
+    }
+    if (!hasValidSwapTarget) {
+      setStatusText('Pick a valid target class.');
+      return;
+    }
+    swapClassInstances(workspaceClassDialog.selectedClassIds, workspaceClassDialog.targetClassId, scope);
+    setWorkspaceClassDialog(null);
+  };
+
+  const runRemoveInstances = (scope: 'global' | 'currentImage'): void => {
+    if (!workspaceClassDialog || workspaceClassDialog.type !== 'remove') return;
+    if (workspaceClassDialog.selectedClassIds.length === 0) {
+      setStatusText('Select at least one class.');
+      return;
+    }
+    removeClassInstances(workspaceClassDialog.selectedClassIds, scope);
+    setWorkspaceClassDialog(null);
+  };
+
+  const runAnchoringInstances = (scope: 'global' | 'currentImage'): void => {
+    if (!workspaceClassDialog || workspaceClassDialog.type !== 'anchoring') return;
+    if (workspaceClassDialog.selectedClassIds.length === 0) {
+      setStatusText('Select at least one class.');
+      return;
+    }
+    setClassInstancesAnchoring(
+      workspaceClassDialog.selectedClassIds,
+      workspaceClassDialog.value === 'anchor',
+      scope
+    );
+    setWorkspaceClassDialog(null);
+  };
+
+  const runVisibilityInstances = (scope: 'global' | 'currentImage'): void => {
+    if (!workspaceClassDialog || workspaceClassDialog.type !== 'visibility') return;
+    if (workspaceClassDialog.selectedClassIds.length === 0) {
+      setStatusText('Select at least one class.');
+      return;
+    }
+    setClassInstancesVisibility(
+      workspaceClassDialog.selectedClassIds,
+      workspaceClassDialog.value === 'show',
+      scope
+    );
+    setWorkspaceClassDialog(null);
+  };
+
+  const runWorkspaceClassOperation = (scope: 'global' | 'currentImage'): void => {
+    if (!workspaceClassDialog) return;
+    if (workspaceClassDialog.type === 'swap') {
+      runSwapInstances(scope);
+      return;
+    }
+    if (workspaceClassDialog.type === 'remove') {
+      runRemoveInstances(scope);
+      return;
+    }
+    if (workspaceClassDialog.type === 'anchoring') {
+      runAnchoringInstances(scope);
+      return;
+    }
+    runVisibilityInstances(scope);
+  };
+
   const toggleMenu = (id: MenuId): void => {
     setOpenMenu((prev) => (prev === id ? null : id));
   };
@@ -494,6 +693,12 @@ export function TopBar(): JSX.Element {
 
       setOpenMenu(null);
 
+      if (workspaceClassDialog) {
+        e.preventDefault();
+        setWorkspaceClassDialog(null);
+        return;
+      }
+
       if (confirmCloseSettings) {
         e.preventDefault();
         setConfirmCloseSettings(false);
@@ -517,16 +722,23 @@ export function TopBar(): JSX.Element {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [confirmCloseSettings, hasPendingSettingsChanges, settingsOpen, videoImportBusy, videoImportDialog]);
+  }, [
+    confirmCloseSettings,
+    hasPendingSettingsChanges,
+    settingsOpen,
+    videoImportBusy,
+    videoImportDialog,
+    workspaceClassDialog,
+  ]);
 
   useEffect(() => {
-    if (!settingsOpen && !videoImportDialog) return;
+    if (!settingsOpen && !videoImportDialog && !workspaceClassDialog) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [settingsOpen, videoImportDialog]);
+  }, [settingsOpen, videoImportDialog, workspaceClassDialog]);
 
   useEffect(() => {
     if (!videoImportDialog) {
@@ -535,6 +747,28 @@ export function TopBar(): JSX.Element {
     }
     syncVideoDraft(videoImportDialog);
   }, [videoImportDialog]);
+
+  useEffect(() => {
+    if (!workspaceClassDialog) return;
+    const validClassIds = new Set(classes.map((cls) => cls.id));
+    const selectedClassIds = workspaceClassDialog.selectedClassIds.filter((id) => validClassIds.has(id));
+    const selectedChanged =
+      selectedClassIds.length !== workspaceClassDialog.selectedClassIds.length ||
+      selectedClassIds.some((id, index) => id !== workspaceClassDialog.selectedClassIds[index]);
+    if (workspaceClassDialog.type !== 'swap') {
+      if (selectedChanged) {
+        setWorkspaceClassDialog({ ...workspaceClassDialog, selectedClassIds });
+      }
+      return;
+    }
+    const swapTargets = classes.filter((cls) => !selectedClassIds.includes(cls.id));
+    const targetClassId = swapTargets.some((cls) => cls.id === workspaceClassDialog.targetClassId)
+      ? workspaceClassDialog.targetClassId
+      : swapTargets[0]?.id ?? '';
+    if (selectedChanged || targetClassId !== workspaceClassDialog.targetClassId) {
+      setWorkspaceClassDialog({ ...workspaceClassDialog, selectedClassIds, targetClassId });
+    }
+  }, [classes, workspaceClassDialog]);
 
   useEffect(() => {
     if (!statusText) return;
@@ -642,6 +876,18 @@ export function TopBar(): JSX.Element {
                 </button>
 
                 <div className="menu-group-label menu-group-label-separator">Workspace</div>
+                <button onClick={openSwapInstancesDialog} disabled={!hasGlobalAnnotations}>
+                  Swap instances of classes
+                </button>
+                <button onClick={openRemoveInstancesDialog} disabled={!hasGlobalAnnotations}>
+                  Remove instances of classes
+                </button>
+                <button onClick={openAnchoringInstancesDialog} disabled={!hasGlobalAnnotations}>
+                  Set anchoring for class instances
+                </button>
+                <button onClick={openVisibilityInstancesDialog} disabled={!hasGlobalAnnotations}>
+                  Set visibility for class instances
+                </button>
                 <button onClick={() => runAndClose(async () => closeAllImages())} disabled={!hasImages}>
                   Close all images
                 </button>
@@ -895,6 +1141,187 @@ export function TopBar(): JSX.Element {
                     onClick={runVideoImport}
                   >
                     {videoImportBusy ? 'Parsing...' : 'Parse video'}
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+      {workspaceClassDialog && (
+        <div className="modal-backdrop" onClick={() => setWorkspaceClassDialog(null)}>
+          <div className="modal-card workspace-class-op-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-stack">
+              <section>
+                <h4>
+                  {workspaceClassDialog.type === 'swap'
+                    ? 'Swap instances of classes'
+                    : workspaceClassDialog.type === 'remove'
+                      ? 'Remove instances of classes'
+                      : workspaceClassDialog.type === 'anchoring'
+                        ? 'Set anchoring for class instances'
+                        : 'Set visibility for class instances'}
+                </h4>
+                <p>
+                  {workspaceClassDialog.type === 'swap'
+                    ? 'Select one or more source classes and a target class.'
+                    : workspaceClassDialog.type === 'remove'
+                      ? 'Select one or more classes whose annotation instances should be removed.'
+                      : workspaceClassDialog.type === 'anchoring'
+                        ? 'Select classes and choose whether their instances should be anchored or unanchored.'
+                        : 'Select classes and choose whether their instances should be shown or hidden.'}
+                </p>
+                <label>
+                  Search classes
+                  <input
+                    type="text"
+                    value={workspaceClassDialog.search}
+                    onChange={(e) =>
+                      setWorkspaceClassDialog((prev) => (prev ? { ...prev, search: e.target.value } : prev))
+                    }
+                    placeholder="Filter classes"
+                  />
+                </label>
+                <div className="row class-filter-actions">
+                  <button type="button" onClick={selectAllVisibleDialogClasses} disabled={workspaceDialogClasses.length === 0}>
+                    Select all visible
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearDialogClassSelection}
+                    disabled={workspaceClassDialog.selectedClassIds.length === 0}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="workspace-class-picker-list">
+                  {workspaceDialogClasses.length === 0 && <div className="class-filter-empty">No matching classes.</div>}
+                  {workspaceDialogClasses.map((cls) => (
+                    <button
+                      key={cls.id}
+                      type="button"
+                      className={`class-filter-option ${selectedDialogClassSet.has(cls.id) ? 'selected' : ''}`}
+                      onClick={() => toggleWorkspaceDialogClass(cls.id)}
+                    >
+                      <span className="class-filter-check" aria-hidden="true">
+                        {selectedDialogClassSet.has(cls.id) ? '✓' : ''}
+                      </span>
+                      <span className="color-dot" style={{ background: cls.color }} />
+                      <span className="class-filter-option-name">{cls.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {workspaceClassDialog.type === 'swap' && (
+                  <label>
+                    Target class
+                    <select
+                      value={workspaceClassDialog.targetClassId}
+                      onChange={(e) =>
+                        setWorkspaceClassDialog((prev) =>
+                          prev && prev.type === 'swap'
+                            ? { ...prev, targetClassId: e.target.value }
+                            : prev
+                        )
+                      }
+                    >
+                      {workspaceDialogSwapTargets.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {workspaceClassDialog.type === 'anchoring' && (
+                  <label>
+                    Action
+                    <div className="row">
+                      <button
+                        type="button"
+                        className={workspaceClassDialog.value === 'anchor' ? 'active' : ''}
+                        onClick={() =>
+                          setWorkspaceClassDialog((prev) =>
+                            prev && prev.type === 'anchoring'
+                              ? { ...prev, value: 'anchor' }
+                              : prev
+                          )
+                        }
+                      >
+                        Anchor
+                      </button>
+                      <button
+                        type="button"
+                        className={workspaceClassDialog.value === 'unanchor' ? 'active' : ''}
+                        onClick={() =>
+                          setWorkspaceClassDialog((prev) =>
+                            prev && prev.type === 'anchoring'
+                              ? { ...prev, value: 'unanchor' }
+                              : prev
+                          )
+                        }
+                      >
+                        Unanchor
+                      </button>
+                    </div>
+                  </label>
+                )}
+                {workspaceClassDialog.type === 'visibility' && (
+                  <label>
+                    Action
+                    <div className="row">
+                      <button
+                        type="button"
+                        className={workspaceClassDialog.value === 'show' ? 'active' : ''}
+                        onClick={() =>
+                          setWorkspaceClassDialog((prev) =>
+                            prev && prev.type === 'visibility'
+                              ? { ...prev, value: 'show' }
+                              : prev
+                          )
+                        }
+                      >
+                        Show
+                      </button>
+                      <button
+                        type="button"
+                        className={workspaceClassDialog.value === 'hide' ? 'active' : ''}
+                        onClick={() =>
+                          setWorkspaceClassDialog((prev) =>
+                            prev && prev.type === 'visibility'
+                              ? { ...prev, value: 'hide' }
+                              : prev
+                          )
+                        }
+                      >
+                        Hide
+                      </button>
+                    </div>
+                  </label>
+                )}
+
+                <div className="row dialog-actions">
+                  <button onClick={() => setWorkspaceClassDialog(null)}>Cancel</button>
+                  <button
+                    onClick={() => runWorkspaceClassOperation('currentImage')}
+                    disabled={
+                      !hasSelectedImageForClassOps ||
+                      !hasSelectedImageClassInstances ||
+                      workspaceClassDialog.selectedClassIds.length === 0 ||
+                      (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget)
+                    }
+                  >
+                    Apply selected image
+                  </button>
+                  <button
+                    onClick={() => runWorkspaceClassOperation('global')}
+                    disabled={
+                      !hasGlobalClassInstances ||
+                      workspaceClassDialog.selectedClassIds.length === 0 ||
+                      (workspaceClassDialog.type === 'swap' && !hasValidSwapTarget)
+                    }
+                  >
+                    Apply all images
                   </button>
                 </div>
               </section>
