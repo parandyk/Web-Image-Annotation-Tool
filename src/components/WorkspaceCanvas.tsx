@@ -987,6 +987,15 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const crosshairStageX = crosshairImgPos.x * viewScale + viewPos.x;
   const crosshairStageY = crosshairImgPos.y * viewScale + viewPos.y;
 
+  const draftStageRect = draftBBox
+    ? {
+        left: draftBBox.x * viewScale + viewPos.x,
+        top: draftBBox.y * viewScale + viewPos.y,
+        width: draftBBox.width * viewScale,
+        height: draftBBox.height * viewScale,
+      }
+    : null;
+
   const crossLabelText = `${crosshairImgPos.x.toFixed(1)}, ${crosshairImgPos.y.toFixed(1)}`;
   const crossLabelW = Math.max(72, crossLabelText.length * 7.1 + 12);
   const crossLabelH = 22;
@@ -1096,6 +1105,18 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
           <div className="workspace-crosshair-overlay" aria-hidden="true">
             <div className="crosshair-line-h" style={{ top: `${crosshairStageY}px` }} />
             <div className="crosshair-line-v" style={{ left: `${crosshairStageX}px` }} />
+            {draftStageRect && (
+              <div
+                className="workspace-draft-overlay"
+                style={{
+                  left: `${draftStageRect.left}px`,
+                  top: `${draftStageRect.top}px`,
+                  width: `${Math.max(1, draftStageRect.width)}px`,
+                  height: `${Math.max(1, draftStageRect.height)}px`,
+                  borderColor: draftClassColor,
+                }}
+              />
+            )}
             <div className="crosshair-coords" style={{ left: `${crossLabelLeft}px`, top: `${crossLabelTop}px` }}>
               {crossLabelText}
             </div>
@@ -1433,7 +1454,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                 );
               })}
 
-            {draftBBox && (
+            {draftBBox && !showCrosshair && (
               <Rect
                 x={draftBBox.x}
                 y={draftBBox.y}

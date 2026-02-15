@@ -262,6 +262,8 @@ label.inline-check {
   border-right: 1px solid var(--line);
   min-height: 0;
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .workspace-empty {
@@ -308,7 +310,7 @@ label.inline-check {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 12;
+  z-index: 6;
 }
 
 .crosshair-line-h {
@@ -316,6 +318,7 @@ label.inline-check {
   left: 0;
   right: 0;
   height: 1px;
+  z-index: 1;
   background: rgba(125, 211, 252, 0.9);
   box-shadow:
     0 0 0 1px rgba(2, 6, 23, 0.8),
@@ -328,6 +331,7 @@ label.inline-check {
   top: 0;
   bottom: 0;
   width: 1px;
+  z-index: 1;
   background: rgba(125, 211, 252, 0.9);
   box-shadow:
     0 0 0 1px rgba(2, 6, 23, 0.8),
@@ -337,6 +341,7 @@ label.inline-check {
 
 .crosshair-coords {
   position: absolute;
+  z-index: 3;
   height: 22px;
   padding: 0 6px;
   border: 1px solid rgba(125, 211, 252, 0.9);
@@ -353,6 +358,15 @@ label.inline-check {
   box-shadow:
     0 0 0 1px rgba(2, 6, 23, 0.85),
     0 0 8px rgba(56, 189, 248, 0.25);
+}
+
+.workspace-draft-overlay {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-width: 2px;
+  border-style: dashed;
+  background: transparent;
 }
 
 .workspace-minimap {
@@ -469,6 +483,9 @@ label.inline-check {
   grid-template-rows: auto 1fr;
   min-height: 0;
   min-width: 0;
+  position: relative;
+  z-index: 40;
+  background: rgba(11, 15, 20, 0.96);
 }
 
 .tabs {
