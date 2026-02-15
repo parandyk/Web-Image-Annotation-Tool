@@ -141,9 +141,11 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
 
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
+  const classAssignmentMode = useAppStore((s) => s.classAssignmentMode);
   const selectedAnnotationId = useAppStore((s) => s.selectedAnnotationId);
   const selectedAnnotationIds = useAppStore((s) => s.selectedAnnotationIds);
   const selectedClassId = useAppStore((s) => s.selectedClassId);
+  const liveDraftClassId = useAppStore((s) => s.liveDraftClassId);
   const classes = useAppStore((s) => s.classes);
   const lineThickness = useAppStore((s) => s.lineThickness);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
@@ -171,6 +173,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const setAnnotationSelection = useAppStore((s) => s.setAnnotationSelection);
   const setAnnotationsClass = useAppStore((s) => s.setAnnotationsClass);
   const setLiveDraftBBox = useAppStore((s) => s.setLiveDraftBBox);
+  const setLiveDraftClassId = useAppStore((s) => s.setLiveDraftClassId);
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
   const [viewScale, setViewScale] = useState(1);
@@ -209,6 +212,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setDraftBBox(null);
     setDragAdding(false);
     setLiveDraftBBox(null);
+    setLiveDraftClassId(null);
   };
 
   const clampPointToImage = (p: { x: number; y: number }): { x: number; y: number } => ({
@@ -220,6 +224,10 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     Boolean(evt.ctrlKey || evt.metaKey || evt.getModifierState?.('Control'));
 
   const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
+  const defaultClassId = useMemo(
+    () => classes.find((c) => c.isDefault)?.id ?? classes[0]?.id ?? selectedClassId,
+    [classes, selectedClassId]
+  );
 
   const classHotkeyMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -235,6 +243,14 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     const available = new Set(image.annotations.map((a) => a.id));
     return selectedAnnotationIds.filter((id) => available.has(id));
   }, [image.annotations, selectedAnnotationIds]);
+
+  const draftClassColor = useMemo(() => {
+    const classIdForDraft =
+      classAssignmentMode === 'deferred'
+        ? liveDraftClassId ?? defaultClassId
+        : selectedClassId;
+    return classById.get(classIdForDraft)?.color ?? '#38bdf8';
+  }, [classAssignmentMode, classById, defaultClassId, liveDraftClassId, selectedClassId]);
 
   // Load the browser image element once per selected source.
   useEffect(() => {
@@ -418,6 +434,10 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     return () => setLiveDraftBBox(null);
   }, [setLiveDraftBBox]);
 
+  useEffect(() => {
+    return () => setLiveDraftClassId(null);
+  }, [setLiveDraftClassId]);
+
   const getPointFromPointerEvent = (e: PointerEvent): { x: number; y: number } | null => {
     const stage = stageRef.current;
     if (!stage) return null;
@@ -540,6 +560,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setDraftStart(null);
     setDraftBBox(null);
     setDragAdding(false);
+    setLiveDraftClassId(null);
   };
 
   const onStageMouseDown = (e: Konva.KonvaEventObject<MouseEvent>): void => {
@@ -591,6 +612,11 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       if (!draftStart) {
         setDraftStart(pos);
         setDraftBBox({ x: pos.x, y: pos.y, width: 1, height: 1 });
+        if (classAssignmentMode === 'deferred') {
+          setLiveDraftClassId(defaultClassId);
+        } else {
+          setLiveDraftClassId(null);
+        }
       } else {
         const clamped = {
           x: Math.max(0, Math.min(image.width, pos.x)),
@@ -614,6 +640,11 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setDragAdding(true);
     setDraftStart(pos);
     setDraftBBox({ x: pos.x, y: pos.y, width: 1, height: 1 });
+    if (classAssignmentMode === 'deferred') {
+      setLiveDraftClassId(defaultClassId);
+    } else {
+      setLiveDraftClassId(null);
+    }
   };
 
   const pickNextOverlappingAnnotation = (): string | null => {
@@ -1179,7 +1210,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
                 y={draftBBox.y}
                 width={draftBBox.width}
                 height={draftBBox.height}
-                stroke={classById.get(selectedClassId)?.color ?? '#38bdf8'}
+                stroke={draftClassColor}
                 strokeWidth={2 / viewScale}
                 dash={[8 / viewScale, 6 / viewScale]}
                 listening={false}

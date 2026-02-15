@@ -9,6 +9,7 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const isDialogVariant = variant === 'dialog';
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
+  const classAssignmentMode = useAppStore((s) => s.classAssignmentMode);
   const showLabels = useAppStore((s) => s.showLabels);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const lineThickness = useAppStore((s) => s.lineThickness);
@@ -26,6 +27,7 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
 
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const setAddingMode = useAppStore((s) => s.setAddingMode);
+  const setClassAssignmentMode = useAppStore((s) => s.setClassAssignmentMode);
   const setShowLabels = useAppStore((s) => s.setShowLabels);
   const setBBoxOpacity = useAppStore((s) => s.setBBoxOpacity);
   const setLineThickness = useAppStore((s) => s.setLineThickness);
@@ -115,6 +117,24 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
           </button>
           <button className={addingMode === 'drag' ? 'active' : ''} onClick={() => setAddingMode('drag')}>
             Drag
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h4>Class assignment</h4>
+        <div className="row">
+          <button
+            className={classAssignmentMode === 'activeClass' ? 'active' : ''}
+            onClick={() => setClassAssignmentMode('activeClass')}
+          >
+            Active class
+          </button>
+          <button
+            className={classAssignmentMode === 'deferred' ? 'active' : ''}
+            onClick={() => setClassAssignmentMode('deferred')}
+          >
+            Deferred
           </button>
         </div>
       </section>

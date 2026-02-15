@@ -47,6 +47,7 @@ export type ImageItem = {
 };
 
 export type AnnotationAddingMode = 'click' | 'drag';
+export type AnnotationClassAssignmentMode = 'activeClass' | 'deferred';
 export type InteractionMode = 'add' | 'edit';
 
 export type AnnotationFilterMode = 'none' | 'hideAssigned' | 'hideUnassigned';

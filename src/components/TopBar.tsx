@@ -111,6 +111,7 @@ export function TopBar(): JSX.Element {
   const selectedImageId = useAppStore((s) => s.selectedImageId);
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
+  const classAssignmentMode = useAppStore((s) => s.classAssignmentMode);
   const showLabels = useAppStore((s) => s.showLabels);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const lineThickness = useAppStore((s) => s.lineThickness);
@@ -126,6 +127,7 @@ export function TopBar(): JSX.Element {
 
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const setAddingMode = useAppStore((s) => s.setAddingMode);
+  const setClassAssignmentMode = useAppStore((s) => s.setClassAssignmentMode);
   const setShowLabels = useAppStore((s) => s.setShowLabels);
   const setBBoxOpacity = useAppStore((s) => s.setBBoxOpacity);
   const setLineThickness = useAppStore((s) => s.setLineThickness);
@@ -254,6 +256,7 @@ export function TopBar(): JSX.Element {
   const currentSettingsSnapshot = (): Record<string, boolean | number | string> => ({
     interactionMode,
     addingMode,
+    classAssignmentMode,
     showLabels,
     bboxOpacity,
     lineThickness,
@@ -271,6 +274,7 @@ export function TopBar(): JSX.Element {
   const applySettingsSnapshot = (snap: Record<string, boolean | number | string>): void => {
     setInteractionMode(snap.interactionMode as 'add' | 'edit');
     setAddingMode(snap.addingMode as 'click' | 'drag');
+    setClassAssignmentMode(snap.classAssignmentMode as 'activeClass' | 'deferred');
     setShowLabels(Boolean(snap.showLabels));
     setBBoxOpacity(Number(snap.bboxOpacity));
     setLineThickness(Number(snap.lineThickness));
@@ -682,6 +686,7 @@ export function TopBar(): JSX.Element {
                 onClick={() => {
                   setInteractionMode('edit');
                   setAddingMode('click');
+                  setClassAssignmentMode('activeClass');
                   setShowLabels(true);
                   setBBoxOpacity(0.2);
                   setLineThickness(2);

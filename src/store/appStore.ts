@@ -3,6 +3,7 @@ import JSZip from 'jszip';
 import {
   Annotation,
   AnnotationAddingMode,
+  AnnotationClassAssignmentMode,
   AnnotationFilterMode,
   AnnotationSortMode,
   BBox,
@@ -36,6 +37,7 @@ type Snapshot = {
 type ViewState = {
   interactionMode: InteractionMode;
   addingMode: AnnotationAddingMode;
+  classAssignmentMode: AnnotationClassAssignmentMode;
   imageSort: ImageSortMode;
   imageFilter: ImageFilterMode;
   annotationSort: AnnotationSortMode;
@@ -66,6 +68,9 @@ type AppState = ViewState & {
   selectedAnnotationId: string | null;
   selectedAnnotationIds: string[];
   liveDraftBBox: BBox | null;
+  liveDraftClassId: string | null;
+  deferredLastAnnotationId: string | null;
+  deferredLastImageId: string | null;
   nextDisplayIdByClass: Record<string, number>;
   undoStack: Snapshot[];
   redoStack: Snapshot[];
@@ -73,6 +78,7 @@ type AppState = ViewState & {
   initializeDefaults: () => void;
   setInteractionMode: (mode: InteractionMode) => void;
   setAddingMode: (mode: AnnotationAddingMode) => void;
+  setClassAssignmentMode: (mode: AnnotationClassAssignmentMode) => void;
   setImageSort: (mode: ImageSortMode) => void;
   setImageFilter: (mode: ImageFilterMode) => void;
   setAnnotationSort: (mode: AnnotationSortMode) => void;
@@ -94,6 +100,7 @@ type AppState = ViewState & {
   setExportIncludeUnassigned: (v: boolean) => void;
   setStatusText: (v: string | null) => void;
   setLiveDraftBBox: (bbox: BBox | null) => void;
+  setLiveDraftClassId: (classId: string | null) => void;
 
   openImages: (files: File[]) => Promise<void>;
   openVideoFrames: (file: File, options: VideoParseOptions) => Promise<void>;
@@ -517,10 +524,15 @@ function getNextDisplayIdForImage(
   return maxDisplayId + 1;
 }
 
+function getDefaultClassId(classes: ClassData[], fallback = ''): string {
+  return classes.find((c) => c.isDefault)?.id ?? classes[0]?.id ?? fallback;
+}
+
 function getDefaultViewState(): ViewState {
   return {
     interactionMode: 'edit',
     addingMode: 'click',
+    classAssignmentMode: 'activeClass',
     imageSort: 'none',
     imageFilter: 'none',
     annotationSort: 'none',
@@ -547,6 +559,7 @@ function toViewStateSnapshot(state: ViewState): ViewState {
   return {
     interactionMode: state.interactionMode,
     addingMode: state.addingMode,
+    classAssignmentMode: state.classAssignmentMode,
     imageSort: state.imageSort,
     imageFilter: state.imageFilter,
     annotationSort: state.annotationSort,
@@ -579,6 +592,7 @@ function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | nu
   return {
     interactionMode: pickEnum(source.interactionMode, ['add', 'edit'] as const, defaults.interactionMode),
     addingMode: pickEnum(source.addingMode, ['click', 'drag'] as const, defaults.addingMode),
+    classAssignmentMode: pickEnum(source.classAssignmentMode, ['activeClass', 'deferred'] as const, defaults.classAssignmentMode),
     imageSort: pickEnum(
       source.imageSort,
       ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
@@ -642,6 +656,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedAnnotationId: null,
   selectedAnnotationIds: [],
   liveDraftBBox: null,
+  liveDraftClassId: null,
+  deferredLastAnnotationId: null,
+  deferredLastImageId: null,
   nextDisplayIdByClass: {},
   undoStack: [],
   redoStack: [],
@@ -671,8 +688,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  setInteractionMode: (mode) => set({ interactionMode: mode }),
+  setInteractionMode: (mode) =>
+    set((s) =>
+      mode === 'add'
+        ? {
+            interactionMode: mode,
+            selectedClassId:
+              s.classAssignmentMode === 'deferred'
+                ? getDefaultClassId(s.classes, s.selectedClassId)
+                : s.selectedClassId,
+          }
+        : { interactionMode: mode, liveDraftBBox: null, liveDraftClassId: null }
+    ),
   setAddingMode: (mode) => set({ addingMode: mode }),
+  setClassAssignmentMode: (mode) =>
+    set((s) => {
+      if (mode !== 'deferred') {
+        return {
+          classAssignmentMode: mode,
+          liveDraftClassId: null,
+          deferredLastAnnotationId: null,
+          deferredLastImageId: null,
+        };
+      }
+      const defaultClassId = getDefaultClassId(s.classes, s.selectedClassId);
+      return {
+        classAssignmentMode: mode,
+        selectedClassId: defaultClassId,
+      };
+    }),
   setImageSort: (mode) => set({ imageSort: mode }),
   setImageFilter: (mode) => set({ imageFilter: mode }),
   setAnnotationSort: (mode) => set({ annotationSort: mode }),
@@ -694,6 +738,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setExportIncludeUnassigned: (v) => set({ exportIncludeUnassigned: v }),
   setStatusText: (v) => set({ statusText: v }),
   setLiveDraftBBox: (bbox) => set({ liveDraftBBox: bbox }),
+  setLiveDraftClassId: (classId) => set({ liveDraftClassId: classId }),
 
   // --- Import/open actions ---
   openImages: async (files) => {
@@ -1355,6 +1400,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const importedView: ViewState = {
       interactionMode: enumValue(rawSettings.interactionMode, ['add', 'edit'] as const, defaultView.interactionMode),
       addingMode: enumValue(rawSettings.addingMode, ['click', 'drag'] as const, defaultView.addingMode),
+      classAssignmentMode: enumValue(
+        rawSettings.classAssignmentMode,
+        ['activeClass', 'deferred'] as const,
+        defaultView.classAssignmentMode
+      ),
       imageSort: enumValue(
         rawSettings.imageSort,
         ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
@@ -1596,7 +1646,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const rawSelection = isObject(root.selection) ? root.selection : {};
     const requestedClassId = asString(rawSelection.selectedClassId);
-    const selectedClassId = requestedClassId && validClassIds.has(requestedClassId) ? requestedClassId : fallbackClassId;
+    const importedSelectedClassId = requestedClassId && validClassIds.has(requestedClassId) ? requestedClassId : fallbackClassId;
+    const selectedClassId =
+      importedView.classAssignmentMode === 'deferred'
+        ? getDefaultClassId(importedClasses, fallbackClassId)
+        : importedSelectedClassId;
 
     const imageById = new Map(importedImages.map((img) => [img.id, img]));
     const requestedImageId = asString(rawSelection.selectedImageId);
@@ -1642,6 +1696,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedAnnotationId,
       selectedAnnotationIds,
       liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
       nextDisplayIdByClass,
       undoStack: [...s.undoStack, cloneSnapshot(base)],
       redoStack: [],
@@ -1661,8 +1718,77 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectImage: (imageId) =>
-    set({ selectedImageId: imageId, selectedAnnotationId: null, selectedAnnotationIds: [], liveDraftBBox: null }),
-  selectClass: (classId) => set({ selectedClassId: classId }),
+    set({
+      selectedImageId: imageId,
+      selectedAnnotationId: null,
+      selectedAnnotationIds: [],
+      liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
+    }),
+  selectClass: (classId) => {
+    const state = get();
+    if (!state.classes.some((c) => c.id === classId)) return;
+
+    const shouldAssignDeferred =
+      state.interactionMode === 'add' &&
+      state.classAssignmentMode === 'deferred';
+
+    if (!shouldAssignDeferred) {
+      set({ selectedClassId: classId });
+      return;
+    }
+
+    const defaultClassId = getDefaultClassId(state.classes, state.selectedClassId);
+
+    if (state.liveDraftBBox) {
+      set({
+        selectedClassId: defaultClassId,
+        liveDraftClassId: classId,
+      });
+      return;
+    }
+
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image) {
+      set({ selectedClassId: defaultClassId });
+      return;
+    }
+
+    const targetId =
+      state.deferredLastImageId === image.id ? state.deferredLastAnnotationId : null;
+    if (!targetId || !image.annotations.some((a) => a.id === targetId)) {
+      set({ selectedClassId: defaultClassId });
+      return;
+    }
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      selectedClassId: defaultClassId,
+      images: s.images.map((img) =>
+        img.id !== s.selectedImageId
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((a) =>
+                a.id === targetId ? { ...a, classId } : a
+              ),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
   selectAnnotation: (annotationId) =>
     set({ selectedAnnotationId: annotationId, selectedAnnotationIds: annotationId ? [annotationId] : [] }),
   setAnnotationSelection: (annotationIds, latestId = null) => {
@@ -2026,7 +2152,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const minSize = Math.max(2, state.dragDeadzonePx);
     if (normalized.width < minSize || normalized.height < minSize) return;
 
-    const classId = state.selectedClassId;
+    const defaultClassId = getDefaultClassId(state.classes, state.selectedClassId);
+    const classId =
+      state.classAssignmentMode === 'deferred'
+        ? state.liveDraftClassId && state.classes.some((c) => c.id === state.liveDraftClassId)
+          ? state.liveDraftClassId
+          : defaultClassId
+        : state.selectedClassId;
     const displayId = getNextDisplayIdForImage(state.nextDisplayIdByClass, state.images, image.id);
 
     const base: Snapshot = {
@@ -2056,6 +2188,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
       selectedAnnotationId: newAnn.id,
       selectedAnnotationIds: [newAnn.id],
+      selectedClassId:
+        s.classAssignmentMode === 'deferred'
+          ? getDefaultClassId(s.classes, s.selectedClassId)
+          : s.selectedClassId,
+      liveDraftClassId: null,
+      deferredLastAnnotationId:
+        s.classAssignmentMode === 'deferred' ? newAnn.id : null,
+      deferredLastImageId:
+        s.classAssignmentMode === 'deferred' ? image.id : null,
       nextDisplayIdByClass: {
         ...s.nextDisplayIdByClass,
         [image.id]: displayId + 1,
@@ -2718,6 +2859,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedAnnotationId: null,
       selectedAnnotationIds: [],
       liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
       nextDisplayIdByClass: {},
       statusText: 'Closed all images.',
       undoStack: [...s.undoStack, cloneSnapshot(base)],
@@ -2746,6 +2890,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedAnnotationId: null,
       selectedAnnotationIds: [],
       liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
       nextDisplayIdByClass: {},
       statusText: 'Workspace cleared.',
       undoStack: [...s.undoStack, cloneSnapshot(base)],
@@ -2777,6 +2924,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       ...restored,
       images: hydratedImages,
+      liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
       undoStack: trimmedUndo,
       redoStack: [...state.redoStack, cloneSnapshot(current)],
     });
@@ -2805,6 +2956,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       ...restored,
       images: hydratedImages,
+      liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
       redoStack: trimmedRedo,
       undoStack: [...state.undoStack, cloneSnapshot(current)],
     });
@@ -2919,8 +3074,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       snapshot.selectedAnnotationId && annotationIds.has(snapshot.selectedAnnotationId)
         ? snapshot.selectedAnnotationId
         : selectedAnnotationIds[selectedAnnotationIds.length - 1] ?? null;
-    const selectedClassId =
+    const restoredSelectedClassId =
       snapshot.selectedClassId && classIds.has(snapshot.selectedClassId) ? snapshot.selectedClassId : defaultClass.id;
+    const selectedClassId =
+      settings.classAssignmentMode === 'deferred'
+        ? getDefaultClassId(classes, defaultClass.id)
+        : restoredSelectedClassId;
 
     const nextDisplayIdByClass: Record<string, number> = {};
     for (const image of images) {
@@ -2944,6 +3103,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedAnnotationIds,
       nextDisplayIdByClass,
       liveDraftBBox: null,
+      liveDraftClassId: null,
+      deferredLastAnnotationId: null,
+      deferredLastImageId: null,
       undoStack: [],
       redoStack: [],
       statusText: 'Recovered previous workspace state.',

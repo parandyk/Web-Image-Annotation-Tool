@@ -21,6 +21,8 @@ export default function App(): JSX.Element {
   const moveToLastImage = useAppStore((s) => s.moveToLastImage);
   const moveToNextAnnotation = useAppStore((s) => s.moveToNextAnnotation);
   const moveToPrevAnnotation = useAppStore((s) => s.moveToPrevAnnotation);
+  const interactionMode = useAppStore((s) => s.interactionMode);
+  const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const createRecoverySnapshot = useAppStore((s) => s.createRecoverySnapshot);
   const restoreRecoverySnapshot = useAppStore((s) => s.restoreRecoverySnapshot);
   const images = useAppStore((s) => s.images);
@@ -63,6 +65,26 @@ export default function App(): JSX.Element {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [redo, undo]);
+
+  useEffect(() => {
+    // Backquote toggles add/edit mode unless user is actively typing in a control.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
+      if (e.repeat) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.code !== 'Backquote') return;
+      if (document.querySelector('.modal-backdrop')) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest('input,textarea,select,[contenteditable=\"true\"],.class-hotkey-btn.active')) return;
+
+      e.preventDefault();
+      setInteractionMode(interactionMode === 'add' ? 'edit' : 'add');
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [interactionMode, setInteractionMode]);
 
   useEffect(() => {
     // Arrow-key navigation is disabled while typing/editing to avoid hijacking text inputs.

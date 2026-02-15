@@ -8,6 +8,7 @@ const RECOVERY_KEY = 'latest';
 export type WorkspaceRecoveryViewState = {
   interactionMode: 'add' | 'edit';
   addingMode: 'click' | 'drag';
+  classAssignmentMode: 'activeClass' | 'deferred';
   imageSort:
     | 'none'
     | 'alphabetical'
