@@ -182,6 +182,8 @@ export function TopBar(): JSX.Element {
   const drawBoxFill = useAppStore((s) => s.drawBoxFill);
   const drawBoxBorder = useAppStore((s) => s.drawBoxBorder);
   const showCrosshair = useAppStore((s) => s.showCrosshair);
+  const showMinimap = useAppStore((s) => s.showMinimap);
+  const minimapLocation = useAppStore((s) => s.minimapLocation);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressUnassigned = useAppStore((s) => s.suppressUnassignedExportWarningDialog);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
@@ -198,6 +200,8 @@ export function TopBar(): JSX.Element {
   const setDrawBoxFill = useAppStore((s) => s.setDrawBoxFill);
   const setDrawBoxBorder = useAppStore((s) => s.setDrawBoxBorder);
   const setShowCrosshair = useAppStore((s) => s.setShowCrosshair);
+  const setShowMinimap = useAppStore((s) => s.setShowMinimap);
+  const setMinimapLocation = useAppStore((s) => s.setMinimapLocation);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
   const setSuppressUnassigned = useAppStore((s) => s.setSuppressUnassignedExportWarningDialog);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
@@ -369,6 +373,8 @@ export function TopBar(): JSX.Element {
     drawBoxFill,
     drawBoxBorder,
     showCrosshair,
+    showMinimap,
+    minimapLocation,
     dragDeadzonePx,
     suppressUnassigned,
     exportIncludeUnassigned,
@@ -387,6 +393,15 @@ export function TopBar(): JSX.Element {
     setDrawBoxFill(Boolean(snap.drawBoxFill));
     setDrawBoxBorder(Boolean(snap.drawBoxBorder));
     setShowCrosshair(Boolean(snap.showCrosshair));
+    setShowMinimap(Boolean(snap.showMinimap));
+    setMinimapLocation(
+      (typeof snap.minimapLocation === 'string' ? snap.minimapLocation : 'bottomRight') as
+        | 'topLeft'
+        | 'topRight'
+        | 'bottomLeft'
+        | 'bottomRight'
+        | 'sidebar'
+    );
     setDragDeadzonePx(Number(snap.dragDeadzonePx));
     setSuppressUnassigned(Boolean(snap.suppressUnassigned));
     setExportIncludeUnassigned(Boolean(snap.exportIncludeUnassigned));

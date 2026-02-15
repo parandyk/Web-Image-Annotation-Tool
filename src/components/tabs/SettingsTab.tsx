@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../../store/appStore';
+import type { MinimapLocation } from '../../domain/types';
 
 type SettingsTabProps = {
   variant?: 'sidebar' | 'dialog';
@@ -16,6 +17,8 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const drawBoxFill = useAppStore((s) => s.drawBoxFill);
   const drawBoxBorder = useAppStore((s) => s.drawBoxBorder);
   const showCrosshair = useAppStore((s) => s.showCrosshair);
+  const showMinimap = useAppStore((s) => s.showMinimap);
+  const minimapLocation = useAppStore((s) => s.minimapLocation);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressUnassignedWarning = useAppStore((s) => s.suppressUnassignedExportWarningDialog);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
@@ -34,6 +37,8 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const setDrawBoxFill = useAppStore((s) => s.setDrawBoxFill);
   const setDrawBoxBorder = useAppStore((s) => s.setDrawBoxBorder);
   const setShowCrosshair = useAppStore((s) => s.setShowCrosshair);
+  const setShowMinimap = useAppStore((s) => s.setShowMinimap);
+  const setMinimapLocation = useAppStore((s) => s.setMinimapLocation);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
   const setSuppressUnassigned = useAppStore((s) => s.setSuppressUnassignedExportWarningDialog);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
@@ -94,6 +99,14 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
     setAllVisibilityCurrentImage(target);
     lastVisibilityBulkRef.current = target;
   };
+
+  const minimapLocationOptions: Array<{ value: MinimapLocation; label: string }> = [
+    { value: 'topLeft', label: 'Top left' },
+    { value: 'topRight', label: 'Top right' },
+    { value: 'bottomLeft', label: 'Bottom left' },
+    { value: 'bottomRight', label: 'Bottom right' },
+    { value: 'sidebar', label: 'Sidebar (general tab)' },
+  ];
 
   return (
     <div className="panel-stack">
@@ -179,6 +192,10 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
           <input type="checkbox" checked={showCrosshair} onChange={(e) => setShowCrosshair(e.target.checked)} />
           <span>Show crosshair</span>
         </label>
+        <label className="inline-check">
+          <input type="checkbox" checked={showMinimap} onChange={(e) => setShowMinimap(e.target.checked)} />
+          <span>Show minimap</span>
+        </label>
         <label>
           Annotation background opacity
           <input
@@ -229,6 +246,23 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
 
       {isDialogVariant && (
         <>
+          <section>
+            <h4>Minimap</h4>
+            <label>
+              Location
+              <select
+                value={minimapLocation}
+                onChange={(e) => setMinimapLocation(e.target.value as MinimapLocation)}
+              >
+                {minimapLocationOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+
           <section>
             <h4>Export</h4>
             <label className="inline-check">

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Layer, Rect, Stage, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import Konva from 'konva';
+import { createPortal } from 'react-dom';
 import { ImageItem, BBox } from '../domain/types';
 import { useAppStore } from '../store/appStore';
 import { PortalMenu } from './common/PortalMenu';
@@ -138,6 +139,16 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const borderRefs = useRef<Record<string, Konva.Rect | null>>({});
   const selectedRefs = useRef<Record<string, Konva.Rect | null>>({});
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const minimapRef = useRef<HTMLDivElement | null>(null);
+  const minimapDragRef = useRef<{
+    startClientX: number;
+    startClientY: number;
+    startViewportX: number;
+    startViewportY: number;
+    viewportWidth: number;
+    viewportHeight: number;
+    minimapScale: number;
+  } | null>(null);
 
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
@@ -152,6 +163,8 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const drawBoxFill = useAppStore((s) => s.drawBoxFill);
   const drawBoxBorder = useAppStore((s) => s.drawBoxBorder);
   const showCrosshair = useAppStore((s) => s.showCrosshair);
+  const showMinimap = useAppStore((s) => s.showMinimap);
+  const minimapLocation = useAppStore((s) => s.minimapLocation);
   const showLabels = useAppStore((s) => s.showLabels);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
@@ -193,6 +206,8 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const [canvasDragMode, setCanvasDragMode] = useState<'annotate' | 'pan'>('annotate');
   const [crosshairImgPos, setCrosshairImgPos] = useState<{ x: number; y: number }>({ x: image.width / 2, y: image.height / 2 });
   const [pointerInsideImage, setPointerInsideImage] = useState(false);
+  const [isMinimapHovered, setIsMinimapHovered] = useState(false);
+  const [isMinimapDragging, setIsMinimapDragging] = useState(false);
 
   const zoomBounds = useMemo(() => {
     const fitScaleRaw = Math.min(stageSize.width / image.width, stageSize.height / image.height);
@@ -287,6 +302,9 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setSwapClassAnnIds(null);
     setCanvasDragMode('annotate');
     setCrosshairImgPos({ x: image.width / 2, y: image.height / 2 });
+    setIsMinimapHovered(false);
+    setIsMinimapDragging(false);
+    minimapDragRef.current = null;
     setMarqueeStart(null);
     setMarqueeBBox(null);
     setMarqueeSeedSelection([]);
@@ -454,6 +472,149 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       }),
     [classById, image.annotations]
   );
+
+  const minimapLayout = useMemo(() => {
+    // Keep minimap compact and responsive while preserving image aspect ratio.
+    const maxWidth = clampNumber(stageSize.width * 0.24, 120, 280);
+    const maxHeight = clampNumber(stageSize.height * 0.24, 90, 190);
+    const scaleRaw = Math.min(maxWidth / image.width, maxHeight / image.height);
+    const scale = Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : 1;
+    return {
+      scale,
+      width: Math.max(1, Math.round(image.width * scale)),
+      height: Math.max(1, Math.round(image.height * scale)),
+    };
+  }, [image.height, image.width, stageSize.height, stageSize.width]);
+
+  const viewportInImage = useMemo(() => {
+    const safeScale = viewScale > 0 ? viewScale : 1;
+    const left = clampNumber((-viewPos.x) / safeScale, 0, image.width);
+    const top = clampNumber((-viewPos.y) / safeScale, 0, image.height);
+    const right = clampNumber((stageSize.width - viewPos.x) / safeScale, 0, image.width);
+    const bottom = clampNumber((stageSize.height - viewPos.y) / safeScale, 0, image.height);
+    return {
+      x: left,
+      y: top,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
+  }, [image.height, image.width, stageSize.height, stageSize.width, viewPos.x, viewPos.y, viewScale]);
+
+  const viewportRaw = useMemo(() => {
+    const safeScale = viewScale > 0 ? viewScale : 1;
+    return {
+      x: (-viewPos.x) / safeScale,
+      y: (-viewPos.y) / safeScale,
+      width: stageSize.width / safeScale,
+      height: stageSize.height / safeScale,
+    };
+  }, [stageSize.height, stageSize.width, viewPos.x, viewPos.y, viewScale]);
+
+  const minimapViewport = useMemo(() => {
+    const minVisualSize = 12;
+    const rawWidth = viewportInImage.width * minimapLayout.scale;
+    const rawHeight = viewportInImage.height * minimapLayout.scale;
+    const width = clampNumber(rawWidth, Math.min(minVisualSize, minimapLayout.width), minimapLayout.width);
+    const height = clampNumber(rawHeight, Math.min(minVisualSize, minimapLayout.height), minimapLayout.height);
+    const left = clampNumber(viewportInImage.x * minimapLayout.scale, 0, Math.max(0, minimapLayout.width - width));
+    const top = clampNumber(viewportInImage.y * minimapLayout.scale, 0, Math.max(0, minimapLayout.height - height));
+    return { left, top, width, height };
+  }, [minimapLayout.height, minimapLayout.scale, minimapLayout.width, viewportInImage.height, viewportInImage.width, viewportInImage.x, viewportInImage.y]);
+
+  const clampViewportOrigin = (
+    originX: number,
+    originY: number,
+    viewportWidth: number = viewportRaw.width,
+    viewportHeight: number = viewportRaw.height
+  ): { x: number; y: number } => {
+    const minX = Math.min(0, image.width - viewportWidth);
+    const maxX = Math.max(0, image.width - viewportWidth);
+    const minY = Math.min(0, image.height - viewportHeight);
+    const maxY = Math.max(0, image.height - viewportHeight);
+    return {
+      x: clampNumber(originX, minX, maxX),
+      y: clampNumber(originY, minY, maxY),
+    };
+  };
+
+  const setViewByViewportOrigin = (originX: number, originY: number, viewportWidth?: number, viewportHeight?: number): void => {
+    const clamped = clampViewportOrigin(originX, originY, viewportWidth, viewportHeight);
+    setViewPos({ x: -clamped.x * viewScale, y: -clamped.y * viewScale });
+  };
+
+  const centerViewOnImagePoint = (imgX: number, imgY: number): void => {
+    const viewportOriginX = imgX - viewportRaw.width / 2;
+    const viewportOriginY = imgY - viewportRaw.height / 2;
+    setViewByViewportOrigin(viewportOriginX, viewportOriginY);
+  };
+
+  const onMinimapPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0 || !minimapRef.current || minimapLayout.scale <= 0) return;
+    const rect = minimapRef.current.getBoundingClientRect();
+    const localX = clampNumber(e.clientX - rect.left, 0, minimapLayout.width);
+    const localY = clampNumber(e.clientY - rect.top, 0, minimapLayout.height);
+    centerViewOnImagePoint(localX / minimapLayout.scale, localY / minimapLayout.scale);
+  };
+
+  const onMinimapViewportPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    minimapDragRef.current = {
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startViewportX: viewportRaw.x,
+      startViewportY: viewportRaw.y,
+      viewportWidth: viewportRaw.width,
+      viewportHeight: viewportRaw.height,
+      minimapScale: minimapLayout.scale,
+    };
+    setIsMinimapDragging(true);
+    setIsMinimapHovered(true);
+  };
+
+  useEffect(() => {
+    if (!isMinimapDragging) return;
+
+    const onPointerMove = (e: PointerEvent): void => {
+      const drag = minimapDragRef.current;
+      if (!drag || drag.minimapScale <= 0) return;
+      const deltaImageX = (e.clientX - drag.startClientX) / drag.minimapScale;
+      const deltaImageY = (e.clientY - drag.startClientY) / drag.minimapScale;
+      const minX = Math.min(0, image.width - drag.viewportWidth);
+      const maxX = Math.max(0, image.width - drag.viewportWidth);
+      const minY = Math.min(0, image.height - drag.viewportHeight);
+      const maxY = Math.max(0, image.height - drag.viewportHeight);
+      const clampedX = clampNumber(drag.startViewportX + deltaImageX, minX, maxX);
+      const clampedY = clampNumber(drag.startViewportY + deltaImageY, minY, maxY);
+      setViewPos({ x: -clampedX * viewScale, y: -clampedY * viewScale });
+    };
+
+    const stopDrag = (e: PointerEvent): void => {
+      minimapDragRef.current = null;
+      setIsMinimapDragging(false);
+      const minimapRect = minimapRef.current?.getBoundingClientRect();
+      if (!minimapRect) {
+        setIsMinimapHovered(false);
+        return;
+      }
+      const isInside =
+        e.clientX >= minimapRect.left &&
+        e.clientX <= minimapRect.right &&
+        e.clientY >= minimapRect.top &&
+        e.clientY <= minimapRect.bottom;
+      setIsMinimapHovered(isInside);
+    };
+
+    window.addEventListener('pointermove', onPointerMove, true);
+    window.addEventListener('pointerup', stopDrag, true);
+    window.addEventListener('pointercancel', stopDrag, true);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('pointerup', stopDrag, true);
+      window.removeEventListener('pointercancel', stopDrag, true);
+    };
+  }, [image.height, image.width, isMinimapDragging, viewScale]);
 
   const finalizeMarqueeSelection = (endPos: { x: number; y: number } | null): void => {
     if (!marqueeStart) return;
@@ -841,6 +1002,72 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   if (crossLabelLeft < 6) crossLabelLeft = 6;
   if (crossLabelTop < 6) crossLabelTop = 6;
 
+  const minimapLocationClass =
+    minimapLocation === 'topLeft'
+      ? 'location-top-left'
+      : minimapLocation === 'topRight'
+      ? 'location-top-right'
+      : minimapLocation === 'bottomLeft'
+      ? 'location-bottom-left'
+      : minimapLocation === 'bottomRight'
+      ? 'location-bottom-right'
+      : 'location-sidebar';
+
+  const sidebarMinimapHost =
+    minimapLocation === 'sidebar'
+      ? (document.getElementById('general-sidebar-minimap-host') as HTMLDivElement | null)
+      : null;
+
+  const renderMinimap = (): JSX.Element => (
+    <div
+      ref={minimapRef}
+      className={`workspace-minimap ${minimapLocationClass} ${isMinimapHovered ? 'hovered' : ''} ${
+        isMinimapDragging ? 'dragging' : ''
+      }`}
+      style={{ width: `${minimapLayout.width}px`, height: `${minimapLayout.height}px` }}
+      onPointerEnter={() => setIsMinimapHovered(true)}
+      onPointerLeave={() => {
+        if (!isMinimapDragging) setIsMinimapHovered(false);
+      }}
+      onPointerDown={onMinimapPointerDown}
+      role="presentation"
+    >
+      {imageElement && <img className="workspace-minimap-image" src={image.src} alt="" draggable={false} />}
+      <div className="workspace-minimap-annotations" aria-hidden="true">
+        {visibleAnnotations.map((ann) => {
+          const cls = classById.get(ann.classId);
+          if (!cls) return null;
+          const isSelected = selectedIdsForImage.includes(ann.id);
+          return (
+            <div
+              key={`mini_${ann.id}`}
+              className={`workspace-minimap-annotation ${isSelected ? 'selected' : ''} ${
+                ann.isAnchored ? 'anchored' : ''
+              }`}
+              style={{
+                left: `${ann.bbox.x * minimapLayout.scale}px`,
+                top: `${ann.bbox.y * minimapLayout.scale}px`,
+                width: `${Math.max(1, ann.bbox.width * minimapLayout.scale)}px`,
+                height: `${Math.max(1, ann.bbox.height * minimapLayout.scale)}px`,
+                borderColor: isSelected ? '#38bdf8' : cls.color,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div
+        className="workspace-minimap-viewport"
+        style={{
+          left: `${minimapViewport.left}px`,
+          top: `${minimapViewport.top}px`,
+          width: `${minimapViewport.width}px`,
+          height: `${minimapViewport.height}px`,
+        }}
+        onPointerDown={onMinimapViewportPointerDown}
+      />
+    </div>
+  );
+
   return (
     <div className="canvas-shell">
       <div className="canvas-toolbar">
@@ -860,7 +1087,9 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       </div>
       <div
         ref={containerRef}
-        className={`canvas-container ${showCrosshair && pointerInsideImage ? 'canvas-crosshair-mode' : ''}`}
+        className={`canvas-container ${
+          showCrosshair && pointerInsideImage && !isMinimapHovered && !isMinimapDragging ? 'canvas-crosshair-mode' : ''
+        }`}
       >
         {showCrosshair && (
           // Crosshair overlay is UI-only; annotation geometry remains image-space.
@@ -1255,7 +1484,11 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
             />
           </Layer>
         </Stage>
+        {showMinimap && minimapLocation !== 'sidebar' ? renderMinimap() : null}
       </div>
+      {showMinimap && minimapLocation === 'sidebar' && sidebarMinimapHost
+        ? createPortal(renderMinimap(), sidebarMinimapHost)
+        : null}
       {menu && (
         // Right-click menu supports single or multi-selection operations.
         <PortalMenu x={menu.x} y={menu.y} menuRef={menuRef}>

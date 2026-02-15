@@ -17,6 +17,7 @@ import {
   ImageScope,
   ImageSortMode,
   InteractionMode,
+  MinimapLocation,
 } from '../domain/types';
 import { getClassColor } from '../utils/colors';
 import { uid } from '../utils/id';
@@ -60,6 +61,8 @@ type ViewState = {
   drawBoxFill: boolean;
   drawBoxBorder: boolean;
   showCrosshair: boolean;
+  showMinimap: boolean;
+  minimapLocation: MinimapLocation;
   dragDeadzonePx: number;
 };
 
@@ -114,6 +117,8 @@ type AppState = ViewState & {
   setDrawBoxFill: (v: boolean) => void;
   setDrawBoxBorder: (v: boolean) => void;
   setShowCrosshair: (v: boolean) => void;
+  setShowMinimap: (v: boolean) => void;
+  setMinimapLocation: (v: MinimapLocation) => void;
   setDragDeadzonePx: (v: number) => void;
   setSuppressUnassignedExportWarningDialog: (v: boolean) => void;
   setSuppressDeleteAnnotationWarningDialog: (v: boolean) => void;
@@ -620,6 +625,8 @@ function getDefaultViewState(): ViewState {
     drawBoxFill: true,
     drawBoxBorder: true,
     showCrosshair: true,
+    showMinimap: true,
+    minimapLocation: 'bottomRight',
     dragDeadzonePx: 4,
   };
 }
@@ -649,6 +656,8 @@ function toViewStateSnapshot(state: ViewState): ViewState {
     drawBoxFill: state.drawBoxFill,
     drawBoxBorder: state.drawBoxBorder,
     showCrosshair: state.showCrosshair,
+    showMinimap: state.showMinimap,
+    minimapLocation: state.minimapLocation,
     dragDeadzonePx: state.dragDeadzonePx,
   };
 }
@@ -717,6 +726,12 @@ function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewState> | nu
     drawBoxFill: pickBool(source.drawBoxFill, defaults.drawBoxFill),
     drawBoxBorder: pickBool(source.drawBoxBorder, defaults.drawBoxBorder),
     showCrosshair: pickBool(source.showCrosshair, defaults.showCrosshair),
+    showMinimap: pickBool(source.showMinimap, defaults.showMinimap),
+    minimapLocation: pickEnum(
+      source.minimapLocation,
+      ['topLeft', 'topRight', 'bottomLeft', 'bottomRight', 'sidebar'] as const,
+      defaults.minimapLocation
+    ),
     dragDeadzonePx: Math.max(0, Math.floor(pickNum(source.dragDeadzonePx, defaults.dragDeadzonePx))),
   };
 }
@@ -1201,6 +1216,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setDrawBoxFill: (v) => set({ drawBoxFill: v }),
   setDrawBoxBorder: (v) => set({ drawBoxBorder: v }),
   setShowCrosshair: (v) => set({ showCrosshair: v }),
+  setShowMinimap: (v) => set({ showMinimap: v }),
+  setMinimapLocation: (v) => set({ minimapLocation: v }),
   setDragDeadzonePx: (v) => set({ dragDeadzonePx: Math.max(0, Math.floor(v)) }),
   setSuppressUnassignedExportWarningDialog: (v) => set({ suppressUnassignedExportWarningDialog: v }),
   setSuppressDeleteAnnotationWarningDialog: (v) => set({ suppressDeleteAnnotationWarningDialog: v }),
@@ -1946,6 +1963,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       drawBoxFill: asBoolean(rawSettings.drawBoxFill) ?? defaultView.drawBoxFill,
       drawBoxBorder: asBoolean(rawSettings.drawBoxBorder) ?? defaultView.drawBoxBorder,
       showCrosshair: asBoolean(rawSettings.showCrosshair) ?? defaultView.showCrosshair,
+      showMinimap: asBoolean(rawSettings.showMinimap) ?? defaultView.showMinimap,
+      minimapLocation: enumValue(
+        rawSettings.minimapLocation,
+        ['topLeft', 'topRight', 'bottomLeft', 'bottomRight', 'sidebar'] as const,
+        defaultView.minimapLocation
+      ),
       dragDeadzonePx: Math.max(0, Math.floor(asNumber(rawSettings.dragDeadzonePx) ?? defaultView.dragDeadzonePx)),
     };
 

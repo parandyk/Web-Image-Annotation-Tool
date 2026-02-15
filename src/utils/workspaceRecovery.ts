@@ -43,6 +43,8 @@ export type WorkspaceRecoveryViewState = {
   drawBoxFill: boolean;
   drawBoxBorder: boolean;
   showCrosshair: boolean;
+  showMinimap: boolean;
+  minimapLocation: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight' | 'sidebar';
   dragDeadzonePx: number;
 };
 

@@ -355,6 +355,115 @@ label.inline-check {
     0 0 8px rgba(56, 189, 248, 0.25);
 }
 
+.workspace-minimap {
+  position: absolute;
+  z-index: 24;
+  border: 0px solid rgba(148, 163, 184, 0.7);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+  background: rgba(2, 6, 23, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(2, 6, 23, 0.9),
+    0 10px 28px rgba(2, 6, 23, 0.45);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease;
+}
+
+.workspace-minimap.location-top-left {
+  left: 12px;
+  top: 12px;
+}
+
+.workspace-minimap.location-top-right {
+  right: 12px;
+  top: 12px;
+}
+
+.workspace-minimap.location-bottom-left {
+  left: 12px;
+  bottom: 12px;
+}
+
+.workspace-minimap.location-bottom-right {
+  right: 12px;
+  bottom: 12px;
+}
+
+.workspace-minimap.location-sidebar {
+  position: relative;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.workspace-minimap.hovered {
+  border-color: rgba(56, 189, 248, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(2, 6, 23, 0.92),
+    0 0 0 1px rgba(56, 189, 248, 0.45),
+    0 12px 30px rgba(2, 6, 23, 0.5);
+}
+
+.workspace-minimap.dragging {
+  cursor: grabbing;
+}
+
+.workspace-minimap-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  filter: contrast(1.04) saturate(0.88);
+}
+
+.workspace-minimap-annotations {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.workspace-minimap-annotation {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid rgba(229, 231, 235, 0.55);
+  background: rgba(2, 6, 23, 0.12);
+}
+
+.workspace-minimap-annotation.selected {
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.65);
+}
+
+.workspace-minimap-annotation.anchored {
+  border-style: dashed;
+}
+
+.workspace-minimap-viewport {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  background: rgba(56, 189, 248, 0.15);
+  box-shadow:
+    inset 0 0 0 1px rgba(2, 6, 23, 0.82),
+    0 0 0 1px rgba(2, 6, 23, 0.85);
+  cursor: grab;
+  touch-action: none;
+}
+
+.workspace-minimap-viewport:active {
+  cursor: grabbing;
+}
+
 .sidebar {
   display: grid;
   grid-template-rows: auto 1fr;
@@ -440,6 +549,22 @@ label.inline-check {
 
 .general-coordinates-segment .segment-scroll {
   max-height: 230px;
+}
+
+.general-minimap-segment .segment-scroll {
+  max-height: 300px;
+}
+
+.general-minimap-scroll {
+  display: grid;
+  gap: 8px;
+}
+
+.general-sidebar-minimap-host {
+  width: 100%;
+  min-height: 110px;
+  display: grid;
+  place-items: center;
 }
 
 .general-classes-segment .class-name-mid {
@@ -1267,5 +1392,29 @@ label.inline-check {
   .sidebar {
     height: 45vh;
     border-top: 1px solid var(--line);
+  }
+
+  .workspace-minimap {
+    border-radius: 8px;
+  }
+
+  .workspace-minimap.location-top-left {
+    left: 8px;
+    top: 8px;
+  }
+
+  .workspace-minimap.location-top-right {
+    right: 8px;
+    top: 8px;
+  }
+
+  .workspace-minimap.location-bottom-left {
+    left: 8px;
+    bottom: 8px;
+  }
+
+  .workspace-minimap.location-bottom-right {
+    right: 8px;
+    bottom: 8px;
   }
 }
