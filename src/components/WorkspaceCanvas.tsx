@@ -507,6 +507,19 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     [classById, image.annotations]
   );
 
+  const renderOrderedAnnotations = useMemo(() => {
+    if (selectedIdsForImage.length === 0) return visibleAnnotations;
+    const selectedSet = new Set(selectedIdsForImage);
+    const unselected: typeof visibleAnnotations = [];
+    const selected: typeof visibleAnnotations = [];
+    for (const ann of visibleAnnotations) {
+      if (selectedSet.has(ann.id)) selected.push(ann);
+      else unselected.push(ann);
+    }
+    // Draw selected annotations last so they remain mouse-interactable when overlapped.
+    return [...unselected, ...selected];
+  }, [selectedIdsForImage, visibleAnnotations]);
+
   const minimapLayout = useMemo(() => {
     // Keep minimap compact and responsive while preserving image aspect ratio.
     const maxWidth = clampNumber(stageSize.width * 0.24, 120, 280);
@@ -1180,7 +1193,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
           <Layer>
             {imageElement && <KonvaImage image={imageElement} width={image.width} height={image.height} />}
 
-            {visibleAnnotations.map((ann) => {
+            {renderOrderedAnnotations.map((ann) => {
               const cls = classById.get(ann.classId);
               if (!cls) return null;
               const isSelected = selectedIdsForImage.includes(ann.id);

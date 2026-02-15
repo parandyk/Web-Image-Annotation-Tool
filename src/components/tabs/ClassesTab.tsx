@@ -394,7 +394,10 @@ export function ClassesTab(): JSX.Element {
             {displayedClasses.map((cls) => {
               const rename = renameMap[cls.id] ?? cls.name;
               const classAnns = images.flatMap((img) => img.annotations.filter((a) => a.classId === cls.id));
-              const hasUnanchored = classAnns.some((a) => !a.isAnchored);
+              const hasUnanchored =
+                classAnns.length > 0
+                  ? classAnns.some((a) => !a.isAnchored)
+                  : !Boolean(cls.defaultAnchored);
 
               return (
                 <div

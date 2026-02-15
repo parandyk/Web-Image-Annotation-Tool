@@ -64,6 +64,7 @@ export function buildWorkspaceExportPayload(
       name: c.name,
       color: c.color,
       isVisible: c.isVisible,
+      defaultAnchored: Boolean(c.defaultAnchored),
       isDefault: Boolean(c.isDefault),
       hotkey: c.hotkey ?? null,
     })),

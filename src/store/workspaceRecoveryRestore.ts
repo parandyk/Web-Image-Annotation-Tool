@@ -36,6 +36,7 @@ export function restoreRecoverySnapshotPayload(
   const settings = sanitizeViewStateSnapshot(snapshot.settings);
   const classes: ClassData[] = snapshot.classes.map((cls) => ({
     ...cls,
+    defaultAnchored: Boolean(cls.defaultAnchored),
     hotkey: cls.hotkey ? String(cls.hotkey).toUpperCase() : undefined,
   }));
   if (classes.length === 0) {

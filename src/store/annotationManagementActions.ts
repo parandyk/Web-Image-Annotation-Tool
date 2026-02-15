@@ -55,13 +55,16 @@ export function createAnnotationManagementActions(
       if (!resolved) return;
 
       const base = createSnapshotFromState(state);
+      const defaultAnchored = Boolean(
+        state.classes.find((c) => c.id === resolved.classId)?.defaultAnchored
+      );
 
       const newAnn: Annotation = {
         id: uid('ann'),
         classId: resolved.classId,
         bbox: resolved.bbox,
         isVisible: true,
-        isAnchored: false,
+        isAnchored: defaultAnchored,
         displayId: resolved.displayId,
       };
 

@@ -74,6 +74,7 @@ export function createClassManagementActions(
         name: sanitized,
         color: getClassColor(state.classes.length),
         isVisible: true,
+        defaultAnchored: false,
         hotkey: undefined,
       };
 
@@ -212,10 +213,12 @@ export function createClassManagementActions(
 
     toggleClassInstancesAnchoringGlobal: (classId) => {
       const state = get();
-      if (!hasClassId(state.classes, classId)) return;
+      const cls = findClassById(state.classes, classId);
+      if (!cls) return;
 
-      if (!hasAnyClassInstance(state.images, classId)) return;
-      const shouldAnchor = hasAnyUnanchoredClassInstance(state.images, classId);
+      const shouldAnchor = hasAnyClassInstance(state.images, classId)
+        ? hasAnyUnanchoredClassInstance(state.images, classId)
+        : !Boolean(cls.defaultAnchored);
 
       const base = createSnapshotFromState(state);
 

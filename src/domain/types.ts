@@ -10,6 +10,7 @@ export type ClassData = {
   name: string;
   color: string;
   isVisible: boolean;
+  defaultAnchored?: boolean;
   isDefault?: boolean;
   hotkey?: string;
 };

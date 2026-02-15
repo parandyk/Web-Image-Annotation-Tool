@@ -6,6 +6,7 @@ import {
   removeAnnotationsByClass,
   removeClassFromList,
   remapAnnotationsClass,
+  setClassDefaultAnchoringInList,
   setAnchoringForClassInstances,
   setClassVisibilityInList,
 } from './classMutations';
@@ -116,6 +117,7 @@ export function buildRemoveClassInstancesGlobalPatch(
 }
 
 type ToggleClassInstancesAnchoringGlobalPatchState = {
+  classes: ClassData[];
   images: ImageItem[];
 };
 
@@ -124,9 +126,11 @@ export function buildToggleClassInstancesAnchoringGlobalPatch(
   classId: string,
   anchored: boolean
 ): {
+  classes: ClassData[];
   images: ImageItem[];
 } {
   return {
+    classes: setClassDefaultAnchoringInList(state.classes, classId, anchored),
     images: setAnchoringForClassInstances(state.images, classId, anchored),
   };
 }

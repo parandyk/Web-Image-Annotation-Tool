@@ -83,6 +83,7 @@ export async function parseWorkspaceImportPayload(
       name: sanitizedName,
       color,
       isVisible: asBoolean(rawClass.isVisible) ?? true,
+      defaultAnchored: asBoolean(rawClass.defaultAnchored) ?? false,
       isDefault: asBoolean(rawClass.isDefault) ?? false,
       hotkey,
     });

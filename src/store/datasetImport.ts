@@ -104,6 +104,7 @@ export async function parseDatasetImportPayload(input: DatasetImportInput): Prom
       name: sanitized,
       color: getClassColor(workingClasses.length),
       isVisible: true,
+      defaultAnchored: false,
       hotkey: undefined,
     };
     workingClasses.push(newClass);

@@ -8,6 +8,7 @@ export function createFallbackClass(id: string, name: string): ClassData {
     name,
     color: FALLBACK_CLASS_COLOR,
     isVisible: true,
+    defaultAnchored: false,
     isDefault: true,
   };
 }

@@ -44,7 +44,9 @@ type WorkspaceClassOperationDialog =
 
 type AnnotationScopeDialog =
   | null
-  | { type: 'removeAll' | 'visibility' | 'anchoring'; scope: ImageScope; visibilityValue?: 'show' | 'hide' };
+  | { type: 'removeAll'; scope: ImageScope }
+  | { type: 'visibility'; scope: ImageScope; visibilityValue: 'show' | 'hide' }
+  | { type: 'anchoring'; scope: ImageScope; anchoringValue: 'anchor' | 'unanchor' };
 
 type ExportImageNamingMode = 'original' | 'sequential';
 
@@ -165,13 +167,13 @@ export function TopBar(): JSX.Element {
   const exportWorkspaceState = useAppStore((s) => s.exportWorkspaceState);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
+  const canUndo = useAppStore((s) => s.undoStack.length > 0);
+  const canRedo = useAppStore((s) => s.redoStack.length > 0);
   const removeAllBBoxes = useAppStore((s) => s.removeAllBBoxes);
   const removeAllBBoxesGlobal = useAppStore((s) => s.removeAllBBoxesGlobal);
   const removeAllBBoxesBookmarked = useAppStore((s) => s.removeAllBBoxesBookmarked);
   const removeLastBBox = useAppStore((s) => s.removeLastBBox);
-  const toggleAllAnchoringCurrentImage = useAppStore((s) => s.toggleAllAnchoringCurrentImage);
-  const toggleAllAnchoringGlobal = useAppStore((s) => s.toggleAllAnchoringGlobal);
-  const toggleAllAnchoringBookmarked = useAppStore((s) => s.toggleAllAnchoringBookmarked);
+  const setAllAnchoringCurrentImage = useAppStore((s) => s.setAllAnchoringCurrentImage);
   const setAllVisibilityCurrentImage = useAppStore((s) => s.setAllVisibilityCurrentImage);
   const swapClassInstances = useAppStore((s) => s.swapClassInstances);
   const removeClassInstances = useAppStore((s) => s.removeClassInstances);
@@ -798,11 +800,24 @@ export function TopBar(): JSX.Element {
     type: NonNullable<AnnotationScopeDialog>['type']
   ): void => {
     const scope = selectedImage ? 'currentImage' : hasBookmarkedImages ? 'bookmarkedImages' : 'allImages';
-    setAnnotationScopeDialog({
-      type,
-      scope,
-      ...(type === 'visibility' ? { visibilityValue: 'show' as const } : {}),
-    });
+    if (type === 'visibility') {
+      setAnnotationScopeDialog({
+        type,
+        scope,
+        visibilityValue: 'show',
+      });
+    } else if (type === 'anchoring') {
+      setAnnotationScopeDialog({
+        type,
+        scope,
+        anchoringValue: 'anchor',
+      });
+    } else {
+      setAnnotationScopeDialog({
+        type,
+        scope,
+      });
+    }
     closeMenus();
   };
 
@@ -826,9 +841,12 @@ export function TopBar(): JSX.Element {
       setAnnotationScopeDialog(null);
       return;
     }
-    if (scope === 'currentImage') await toggleAllAnchoringCurrentImage();
-    else if (scope === 'bookmarkedImages') await toggleAllAnchoringBookmarked();
-    else await toggleAllAnchoringGlobal();
+    const anchored = annotationScopeDialog.anchoringValue !== 'unanchor';
+    if (scope === 'currentImage') {
+      setAllAnchoringCurrentImage(anchored);
+    } else {
+      setClassInstancesAnchoring(classes.map((cls) => cls.id), anchored, scope);
+    }
     setAnnotationScopeDialog(null);
   };
 
@@ -1195,8 +1213,12 @@ export function TopBar(): JSX.Element {
             </button>
             {openMenu === 'edit' && (
               <div ref={(el) => (popoverRefs.current.edit = el)} className="menu-popover">
-                <button onClick={() => runAndClose(async () => undo())}>Undo</button>
-                <button onClick={() => runAndClose(async () => redo())}>Redo</button>
+                <button onClick={() => runAndClose(async () => undo())} disabled={!canUndo}>
+                  Undo
+                </button>
+                <button onClick={() => runAndClose(async () => redo())} disabled={!canRedo}>
+                  Redo
+                </button>
                 <div className="menu-group-label menu-group-label-separator">Annotations</div>
                 <button onClick={() => runAndClose(async () => removeLastBBox())} disabled={!hasCurrentImageAnnotations}>
                   Remove last annotation (current image)
@@ -1613,7 +1635,7 @@ export function TopBar(): JSX.Element {
                   {annotationScopeDialog.type === 'removeAll'
                     ? 'Remove all annotations'
                     : annotationScopeDialog.type === 'visibility'
-                      ? 'Toggle visibility'
+                      ? 'Set visibility'
                       : 'Toggle anchoring'}
                 </h4>
                 <p>Choose scope of this operation.</p>
@@ -1661,7 +1683,7 @@ export function TopBar(): JSX.Element {
                           )
                         }
                       >
-                        Make visible
+                        Show
                       </button>
                       <button
                         type="button"
@@ -1674,7 +1696,40 @@ export function TopBar(): JSX.Element {
                           )
                         }
                       >
-                        Make invisible
+                        Hide
+                      </button>
+                    </div>
+                  </label>
+                )}
+                {annotationScopeDialog.type === 'anchoring' && (
+                  <label>
+                    Action
+                    <div className="row">
+                      <button
+                        type="button"
+                        className={annotationScopeDialog.anchoringValue === 'anchor' ? 'active' : ''}
+                        onClick={() =>
+                          setAnnotationScopeDialog((prev) =>
+                            prev && prev.type === 'anchoring'
+                              ? { ...prev, anchoringValue: 'anchor' }
+                              : prev
+                          )
+                        }
+                      >
+                        Anchor
+                      </button>
+                      <button
+                        type="button"
+                        className={annotationScopeDialog.anchoringValue === 'unanchor' ? 'active' : ''}
+                        onClick={() =>
+                          setAnnotationScopeDialog((prev) =>
+                            prev && prev.type === 'anchoring'
+                              ? { ...prev, anchoringValue: 'unanchor' }
+                              : prev
+                          )
+                        }
+                      >
+                        Unanchor
                       </button>
                     </div>
                   </label>

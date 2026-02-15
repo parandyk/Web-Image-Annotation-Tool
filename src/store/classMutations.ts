@@ -31,6 +31,16 @@ export function setClassVisibilityInList(
   return classes.map((cls) => (cls.id === classId ? { ...cls, isVisible } : cls));
 }
 
+export function setClassDefaultAnchoringInList(
+  classes: ClassData[],
+  classId: string,
+  defaultAnchored: boolean
+): ClassData[] {
+  return classes.map((cls) =>
+    cls.id === classId ? { ...cls, defaultAnchored } : cls
+  );
+}
+
 export function removeClassFromList(
   classes: ClassData[],
   classId: string
