@@ -141,6 +141,9 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
   const imageNavigationIndex = images.findIndex((img) => img.id === selectedImageId);
   const imageNavigationCount = `${imageNavigationIndex >= 0 ? imageNavigationIndex + 1 : 0}/${images.length}`;
   const imageNavigationLabel = imageNavigationIndex >= 0 ? images[imageNavigationIndex].name : 'No selection';
+  const canCycleImages = imageNavigationIndex >= 0 && images.length > 1;
+  const canJumpToFirstImage = canCycleImages && imageNavigationIndex > 0;
+  const canJumpToLastImage = canCycleImages && imageNavigationIndex < images.length - 1;
 
   const annotationNavigationIndex = annotations.findIndex((ann) => ann.id === selectedAnnotationId);
   const annotationNavigationCount = `${annotationNavigationIndex >= 0 ? annotationNavigationIndex + 1 : 0}/${annotations.length}`;
@@ -150,6 +153,9 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
           classes.find((c) => c.id === annotations[annotationNavigationIndex].classId)?.name ?? 'Unknown'
         }`
       : 'No selection';
+  const canCycleAnnotations = annotationNavigationIndex >= 0 && annotations.length > 1;
+  const canJumpToFirstAnnotation = canCycleAnnotations && annotationNavigationIndex > 0;
+  const canJumpToLastAnnotation = canCycleAnnotations && annotationNavigationIndex < annotations.length - 1;
 
   const selectedAnnotationIdsForCurrentImage = useMemo(() => {
     const available = new Set(annotations.map((ann) => ann.id));
@@ -291,10 +297,10 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     <section className="split-panel">
       <h4>Image navigation</h4>
       <div className="row nav-row">
-        <button className="icon-nav-btn" title="First image" onClick={moveToFirstImage}><NavIcon kind="first" /></button>
-        <button className="icon-nav-btn" title="Previous image" onClick={moveToPrevImage}><NavIcon kind="prev" /></button>
-        <button className="icon-nav-btn" title="Next image" onClick={moveToNextImage}><NavIcon kind="next" /></button>
-        <button className="icon-nav-btn" title="Last image" onClick={moveToLastImage}><NavIcon kind="last" /></button>
+        <button className="icon-nav-btn" title="First image" onClick={moveToFirstImage} disabled={!canJumpToFirstImage}><NavIcon kind="first" /></button>
+        <button className="icon-nav-btn" title="Previous image" onClick={moveToPrevImage} disabled={!canCycleImages}><NavIcon kind="prev" /></button>
+        <button className="icon-nav-btn" title="Next image" onClick={moveToNextImage} disabled={!canCycleImages}><NavIcon kind="next" /></button>
+        <button className="icon-nav-btn" title="Last image" onClick={moveToLastImage} disabled={!canJumpToLastImage}><NavIcon kind="last" /></button>
         <div className="nav-status" title={`${imageNavigationLabel} (${imageNavigationCount})`}>
           <span className="nav-status-label">{imageNavigationLabel}</span>
           <span className="nav-status-count">{imageNavigationCount}</span>
@@ -388,10 +394,38 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     <section className="split-panel">
       <h4>Annotation navigation</h4>
       <div className="row nav-row">
-        <button className="icon-nav-btn" title="First annotation" onClick={moveToFirstAnnotation}><NavIcon kind="first" /></button>
-        <button className="icon-nav-btn" title="Previous annotation" onClick={moveToPrevAnnotation}><NavIcon kind="prev" /></button>
-        <button className="icon-nav-btn" title="Next annotation" onClick={moveToNextAnnotation}><NavIcon kind="next" /></button>
-        <button className="icon-nav-btn" title="Last annotation" onClick={moveToLastAnnotation}><NavIcon kind="last" /></button>
+        <button
+          className="icon-nav-btn"
+          title="First annotation"
+          onClick={moveToFirstAnnotation}
+          disabled={!canJumpToFirstAnnotation}
+        >
+          <NavIcon kind="first" />
+        </button>
+        <button
+          className="icon-nav-btn"
+          title="Previous annotation"
+          onClick={moveToPrevAnnotation}
+          disabled={!canCycleAnnotations}
+        >
+          <NavIcon kind="prev" />
+        </button>
+        <button
+          className="icon-nav-btn"
+          title="Next annotation"
+          onClick={moveToNextAnnotation}
+          disabled={!canCycleAnnotations}
+        >
+          <NavIcon kind="next" />
+        </button>
+        <button
+          className="icon-nav-btn"
+          title="Last annotation"
+          onClick={moveToLastAnnotation}
+          disabled={!canJumpToLastAnnotation}
+        >
+          <NavIcon kind="last" />
+        </button>
         <div className="nav-status" title={`${annotationNavigationLabel} (${annotationNavigationCount})`}>
           <span className="nav-status-label">{annotationNavigationLabel}</span>
           <span className="nav-status-count">{annotationNavigationCount}</span>
