@@ -143,6 +143,7 @@ type AppState = ViewState & {
 
   addAnnotation: (bbox: BBox) => void;
   updateAnnotationBBox: (annotationId: string, bbox: BBox) => void;
+  nudgeSelectedAnnotations: (dx: number, dy: number) => void;
   setAnnotationClass: (annotationId: string, classId: string) => void;
   setAnnotationsClass: (annotationIds: string[], classId: string) => void;
   toggleAnnotationVisibility: (annotationId: string) => void;
@@ -2696,6 +2697,59 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...img,
               annotations: img.annotations.map((a) =>
                 a.id === annotationId ? { ...a, bbox: normalized } : a
+              ),
+            }
+      ),
+      undoStack: [...s.undoStack, cloneSnapshot(base)],
+      redoStack: [],
+    }));
+  },
+
+  nudgeSelectedAnnotations: (dx, dy) => {
+    const state = get();
+    const image = state.images.find((i) => i.id === state.selectedImageId);
+    if (!image) return;
+
+    // Keyboard nudge follows normal drag semantics: only single selected annotation can move.
+    const selectedId = state.selectedAnnotationId;
+    if (!selectedId) return;
+    if (state.selectedAnnotationIds.length > 1) return;
+    if (state.selectedAnnotationIds.length === 1 && state.selectedAnnotationIds[0] !== selectedId) return;
+
+    const ann = image.annotations.find((a) => a.id === selectedId);
+    if (!ann || ann.isAnchored) return;
+
+    const nextX = clamp(ann.bbox.x + dx, 0, image.width - ann.bbox.width);
+    const nextY = clamp(ann.bbox.y + dy, 0, image.height - ann.bbox.height);
+    if (nextX === ann.bbox.x && nextY === ann.bbox.y) return;
+
+    const base: Snapshot = {
+      classes: state.classes,
+      images: state.images,
+      selectedClassId: state.selectedClassId,
+      selectedImageId: state.selectedImageId,
+      selectedAnnotationId: state.selectedAnnotationId,
+      selectedAnnotationIds: [...state.selectedAnnotationIds],
+      nextDisplayIdByClass: state.nextDisplayIdByClass,
+    };
+
+    set((s) => ({
+      images: s.images.map((img) =>
+        img.id !== s.selectedImageId
+          ? img
+          : {
+              ...img,
+              annotations: img.annotations.map((a) =>
+                a.id === selectedId
+                  ? {
+                      ...a,
+                      bbox: {
+                        ...a.bbox,
+                        x: nextX,
+                        y: nextY,
+                      },
+                    }
+                  : a
               ),
             }
       ),

@@ -21,6 +21,7 @@ export default function App(): JSX.Element {
   const moveToLastImage = useAppStore((s) => s.moveToLastImage);
   const moveToNextAnnotation = useAppStore((s) => s.moveToNextAnnotation);
   const moveToPrevAnnotation = useAppStore((s) => s.moveToPrevAnnotation);
+  const nudgeSelectedAnnotations = useAppStore((s) => s.nudgeSelectedAnnotations);
   const interactionMode = useAppStore((s) => s.interactionMode);
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const createRecoverySnapshot = useAppStore((s) => s.createRecoverySnapshot);
@@ -90,11 +91,27 @@ export default function App(): JSX.Element {
     // Arrow-key navigation is disabled while typing/editing to avoid hijacking text inputs.
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (document.querySelector('.modal-backdrop')) return;
 
       const active = document.activeElement as HTMLElement | null;
       if (active?.closest('input,textarea,select,[contenteditable="true"],.class-hotkey-btn.active')) return;
+
+      if (
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')
+      ) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        if (e.key === 'ArrowLeft') nudgeSelectedAnnotations(-step, 0);
+        else if (e.key === 'ArrowRight') nudgeSelectedAnnotations(step, 0);
+        else if (e.key === 'ArrowUp') nudgeSelectedAnnotations(0, -step);
+        else nudgeSelectedAnnotations(0, step);
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -126,6 +143,7 @@ export default function App(): JSX.Element {
     moveToLastImage,
     moveToNextAnnotation,
     moveToNextImage,
+    nudgeSelectedAnnotations,
     moveToPrevAnnotation,
     moveToPrevImage,
   ]);
