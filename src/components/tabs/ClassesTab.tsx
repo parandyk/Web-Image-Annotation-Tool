@@ -359,17 +359,17 @@ export function ClassesTab(): JSX.Element {
             <select value={classSort} onChange={(e) => setClassSort(e.target.value as typeof classSort)}>
               <option value="none">None</option>
               <option value="alphabetical">Alphabetical</option>
-              <option value="reversedAlphabetical">Reversed Alphabetical</option>
-              <option value="countAscending">Count Ascending</option>
-              <option value="countDescending">Count Descending</option>
+              <option value="reversedAlphabetical">Reversed alphabetical</option>
+              <option value="countAscending">Count ascending</option>
+              <option value="countDescending">Count descending</option>
             </select>
           </label>
           <label>
             Filter
             <select value={classFilter} onChange={(e) => setClassFilter(e.target.value as typeof classFilter)}>
               <option value="none">None</option>
-              <option value="hideUsed">Hide Used</option>
-              <option value="hideUnused">Hide Unused</option>
+              <option value="hideUsed">Hide used</option>
+              <option value="hideUnused">Hide unused</option>
             </select>
           </label>
           <label>

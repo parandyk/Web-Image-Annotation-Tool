@@ -404,19 +404,19 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
         <select value={imageSort} onChange={(e) => setImageSort(e.target.value as typeof imageSort)}>
           <option value="none">None</option>
           <option value="alphabetical">Alphabetical</option>
-          <option value="reversedAlphabetical">Reversed Alphabetical</option>
-          <option value="largestFirst">Largest First</option>
-          <option value="smallestFirst">Smallest First</option>
-          <option value="mostAnnotations">Most Annotations</option>
-          <option value="fewestAnnotations">Fewest Annotations</option>
+          <option value="reversedAlphabetical">Reversed alphabetical</option>
+          <option value="largestFirst">Largest first</option>
+          <option value="smallestFirst">Smallest first</option>
+          <option value="mostAnnotations">Most annotations</option>
+          <option value="fewestAnnotations">Fewest annotations</option>
         </select>
       </label>
       <label>
         Filter
         <select value={imageFilter} onChange={(e) => setImageFilter(e.target.value as typeof imageFilter)}>
           <option value="none">None</option>
-          <option value="hideAnnotated">Hide Annotated</option>
-          <option value="hideUnannotated">Hide Unannotated</option>
+          <option value="hideAnnotated">Hide annotated</option>
+          <option value="hideUnannotated">Hide unannotated</option>
         </select>
       </label>
       <label>
@@ -568,17 +568,17 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
           <option value="oldest">Oldest</option>
           <option value="newest">Newest</option>
           <option value="alphabetical">Alphabetical</option>
-          <option value="reversedAlphabetical">Reversed Alphabetical</option>
-          <option value="largestFirst">Largest First</option>
-          <option value="smallestFirst">Smallest First</option>
+          <option value="reversedAlphabetical">Reversed alphabetical</option>
+          <option value="largestFirst">Largest first</option>
+          <option value="smallestFirst">Smallest first</option>
         </select>
       </label>
       <label>
         Filter
         <select value={annotationFilter} onChange={(e) => setAnnotationFilter(e.target.value as typeof annotationFilter)}>
           <option value="none">None</option>
-          <option value="hideAssigned">Hide Assigned</option>
-          <option value="hideUnassigned">Hide Unassigned</option>
+          <option value="hideAssigned">Hide assigned</option>
+          <option value="hideUnassigned">Hide unassigned</option>
         </select>
       </label>
       <label>
