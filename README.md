@@ -30,3 +30,7 @@ https://parandyk.github.io/Web-Image-Annotation-Tool/
 ## Disclaimer
 
 This tool was developed nearly exclusively using OpenAI Codex.
+
+## Documentation
+
+Coming soon!
