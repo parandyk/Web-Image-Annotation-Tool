@@ -22,12 +22,26 @@ The tool allows for annotation of images and videos parsed into frames for stand
 
 YOLO, COCO and Pascal VOC formats are currently supported for both importing and exporting.
 
+## Shortcuts & hotkeys
+
+Users can define their own hotkeys for specific classes from the class sections in the sidebar.
+
+Backquote (`) is a built-in hotkey for switching between adding and editing mode.
+
+Alt + arrow keys for incremental, discrete annotation moving, 1 px translation per move. Shift + Alt + arrow keys for 10 px translation per move.
+
+Left and right arrow key are used for navigation between open images. Up and down arrow key are used for navigation between annotations in the currently selected image.
+
+Ctrl + Z for undo, Ctrl + Shift + Z for redo. Delete works where applicable, e.g. for deleting selected annotations.
+
 ## Showcase
 
 The tool demo is available at:
 https://parandyk.github.io/Web-Image-Annotation-Tool/
 
-Automatic annotation using neural network inference coming soon!
+## Upcoming features
+
+Automatic annotation using neural network inference - coming soon!
 
 ## Disclaimer
 

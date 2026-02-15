@@ -29,7 +29,7 @@ export default function App(): JSX.Element {
   const images = useAppStore((s) => s.images);
   const classes = useAppStore((s) => s.classes);
   const selectedImage = useSelectedImage();
-  const [sidebarTab, setSidebarTab] = useState<'general' | 'images' | 'classes' | 'settings'>('general');
+  const [sidebarTab, setSidebarTab] = useState<'general' | 'images' | 'annotations' | 'classes' | 'settings'>('general');
   const [pendingRecovery, setPendingRecovery] = useState<WorkspaceRecoverySnapshot | null>(null);
   const [recoveryReady, setRecoveryReady] = useState(false);
   const hasWorkspaceStateToLose = useMemo(

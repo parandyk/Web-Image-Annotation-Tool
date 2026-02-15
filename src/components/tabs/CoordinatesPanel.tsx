@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { useSelectedImage } from '../../store/selectors';
+import { MiddleTruncate } from '../common/MiddleTruncate';
 
 type CoordValue = {
   key: 'X1' | 'Y1' | 'X2' | 'Y2' | 'Width' | 'Height';
@@ -61,8 +62,15 @@ export function CoordinatesPanel(): JSX.Element {
       <div className="coords-class-row">
         <span className="coord-key">Class</span>
         <span className="coords-class-badge">
-          {classData && <span className="color-dot" style={{ background: classColor }} />}
-          <span className="coords-class-name">{classLabel}</span>
+          <span className="coords-class-value">
+            {classData && <span className="color-dot" style={{ background: classColor }} />}
+            <MiddleTruncate
+              text={classLabel}
+              className="coords-class-name"
+              measureTarget="grandparent"
+              reservePx={classData ? 18 : 0}
+            />
+          </span>
         </span>
       </div>
       <div className="coords-grid">

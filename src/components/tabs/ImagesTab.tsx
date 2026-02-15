@@ -404,7 +404,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
 
   const imagesPanel = (
     // Image panel: navigation + filtered list + multi-select + bulk delete context menu.
-    <section className="split-panel">
+    <section className={view === 'all' ? 'split-panel' : undefined}>
       <h4>Image navigation</h4>
       <div className="row nav-row">
         <button className="icon-nav-btn" title="First image" onClick={moveToFirstImage} disabled={!canJumpToFirstImage}><NavIcon kind="first" /></button>
@@ -486,7 +486,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
       </label>
 
       <h4>Images</h4>
-      <div className="list split-list-scroll annotation-list-scroll">
+      <div className={view === 'all' ? 'list split-list-scroll annotation-list-scroll' : 'list'}>
         {displayedImages.length === 0 && (
           <div className="list-row empty-row">
             <span>No images loaded yet.</span>
@@ -550,7 +550,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
 
   const annotationsPanel = (
     // Annotation panel: navigation + per-item controls + class reassignment.
-    <section className="split-panel">
+    <section className={view === 'all' ? 'split-panel' : undefined}>
       <h4>Annotation navigation</h4>
       <div className="row nav-row">
         <button
@@ -621,7 +621,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
       </label>
 
       <h4>Annotations</h4>
-      <div className="list split-list-scroll annotation-list-scroll">
+      <div className={view === 'all' ? 'list split-list-scroll annotation-list-scroll' : 'list'}>
         {displayedAnnotations.length === 0 && (
           <div className="list-row empty-row">
             <span>No annotations in current image.</span>
@@ -726,7 +726,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
 
   return (
     <>
-      <div ref={hotkeyScopeRef}>
+      <div ref={hotkeyScopeRef} className={view === 'all' ? 'images-tab-root' : undefined}>
         {view === 'all' && <div className="panel-stack images-tab-split">{imagesPanel}{annotationsPanel}</div>}
         {view === 'images' && <div className="panel-stack">{imagesPanel}</div>}
         {view === 'annotations' && <div className="panel-stack">{annotationsPanel}</div>}

@@ -288,7 +288,7 @@ label.inline-check {
 
 .main-content {
   display: grid;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: 1fr 420px;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -530,15 +530,17 @@ label.inline-check {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-  padding: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
   border-bottom: 1px solid var(--line);
   min-width: 0;
 }
 
 .tabs button {
   min-width: 0;
+  font-size: 13px;
+  padding: 8px 2px;
 }
 
 .tab-body {
@@ -561,6 +563,7 @@ label.inline-check {
   border-radius: 8px;
   padding: 10px;
   display: grid;
+  align-content: start;
   gap: 8px;
   min-width: 0;
 }
@@ -606,6 +609,7 @@ label.inline-check {
 
 .general-coordinates-segment .segment-scroll {
   max-height: 230px;
+  overflow-x: hidden;
 }
 
 .general-minimap-segment .segment-scroll {
@@ -1216,6 +1220,18 @@ label.inline-check {
   display: grid;
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.images-tab-root {
+  min-height: 0;
+  height: 100%;
+}
+
+.images-tab-root > .images-tab-split {
+  min-height: 0;
+  height: 100%;
 }
 
 .split-panel {
@@ -1226,14 +1242,17 @@ label.inline-check {
   overflow: hidden;
 }
 
-.images-tab-split .split-panel {
-  overflow-y: auto;
-  overflow-x: hidden;
+.images-tab-split > section.split-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-content: normal;
+  overflow: hidden;
 }
 
 .images-tab-split .split-list-scroll,
 .images-tab-split .annotation-list-scroll {
-  min-height: 110px;
+  min-height: 0;
 }
 
 .split-list-scroll {
@@ -1493,16 +1512,28 @@ label.inline-check {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .coords-class-badge {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.coords-class-value {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   min-width: 0;
-  max-width: 65%;
-  flex: 0 1 65%;
-  justify-content: flex-end;
+  max-width: 100%;
+  margin-left: auto;
 }
 
 .coords-class-badge .color-dot {
@@ -1511,11 +1542,17 @@ label.inline-check {
 }
 
 .coords-class-name {
+  display: block;
   min-width: 0;
+  max-width: 100%;
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.coords-class-row .coord-key {
+  flex: 0 0 auto;
 }
 
 .coords-grid {
@@ -1557,7 +1594,7 @@ label.inline-check {
 
 @media (max-width: 1200px) {
   .main-content {
-    grid-template-columns: 1fr 320px;
+    grid-template-columns: 1fr 360px;
   }
 }
 

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-export function MiddleTruncate(props: { text: string; className?: string; title?: string; charPx?: number }): JSX.Element {
-  const { text, className, title } = props;
+export function MiddleTruncate(props: {
+  text: string;
+  className?: string;
+  title?: string;
+  charPx?: number;
+  measureTarget?: 'self' | 'parent' | 'grandparent';
+  reservePx?: number;
+}): JSX.Element {
+  const { text, className, title, measureTarget = 'self', reservePx = 0 } = props;
   const ref = useRef<HTMLSpanElement | null>(null);
   const [width, setWidth] = useState(0);
   const [font, setFont] = useState('');
@@ -18,17 +25,23 @@ export function MiddleTruncate(props: { text: string; className?: string; title?
   useEffect(() => {
     if (!ref.current) return;
     const el = ref.current;
+    const measureEl =
+      measureTarget === 'grandparent'
+        ? el.parentElement?.parentElement ?? el.parentElement ?? el
+        : measureTarget === 'parent'
+          ? el.parentElement ?? el
+          : el;
     const computed = window.getComputedStyle(el);
     setFont(
       `${computed.fontStyle} ${computed.fontVariant} ${computed.fontWeight} ${computed.fontSize} / ${computed.lineHeight} ${computed.fontFamily}`
     );
     const observer = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 0;
-      setWidth(Math.max(0, w - 2));
+      setWidth(Math.max(0, w - reservePx - 2));
     });
-    observer.observe(el);
+    observer.observe(measureEl);
     return () => observer.disconnect();
-  }, []);
+  }, [measureTarget, reservePx]);
 
   const rendered = useMemo(() => {
     // Binary-search the largest keep-size that fits so both start and end remain visible.
