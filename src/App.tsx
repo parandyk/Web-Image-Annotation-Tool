@@ -239,7 +239,7 @@ export default function App(): JSX.Element {
     () => (
       <div className="workspace-empty">
         <h2>No image selected</h2>
-        <p>Use Open Images to start annotating.</p>
+        <p>Use open images to start annotating.</p>
       </div>
     ),
     []
