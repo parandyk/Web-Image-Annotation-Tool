@@ -955,6 +955,106 @@ label.inline-check {
   padding: 14px;
 }
 
+.statistics-modal {
+  width: min(940px, 96vw);
+}
+
+.statistics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.statistics-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.statistics-card-label {
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.statistics-card-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-0);
+}
+
+.statistics-section {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.statistics-table-wrap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 260px;
+}
+
+.statistics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.statistics-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 7px 8px;
+  color: var(--text-1);
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid var(--line);
+}
+
+.statistics-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(55, 65, 81, 0.45);
+}
+
+.statistics-name-cell {
+  max-width: 420px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statistics-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statistics-num {
+  text-align: right;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.statistics-empty-cell {
+  color: var(--text-1);
+}
+
+@media (max-width: 760px) {
+  .statistics-summary-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .statistics-name-cell {
+    max-width: 210px;
+  }
+}
+
 .dialog-actions {
   justify-content: flex-end;
   margin-top: 6px;

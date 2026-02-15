@@ -127,6 +127,8 @@ function getFileExtension(name: string): string {
 
 export function TopBar(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statisticsOpen, setStatisticsOpen] = useState(false);
+  const [statisticsScope, setStatisticsScope] = useState<ImageScope>('allImages');
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, boolean | number | string> | null>(null);
   const [confirmCloseSettings, setConfirmCloseSettings] = useState(false);
   const [exportDialog, setExportDialog] = useState<ExportRequest | null>(null);
@@ -450,6 +452,58 @@ export function TopBar(): JSX.Element {
     return images;
   };
 
+  const statisticsImages = useMemo(() => getImagesForScope(statisticsScope), [statisticsScope, images, selectedImage]);
+
+  const statisticsData = useMemo(() => {
+    const defaultClassId = classes.find((cls) => cls.isDefault)?.id ?? null;
+    const classCountById = new Map<string, number>(classes.map((cls) => [cls.id, 0]));
+    const perImageRows = statisticsImages
+      .map((img) => {
+        let unassigned = 0;
+        for (const ann of img.annotations) {
+          classCountById.set(ann.classId, (classCountById.get(ann.classId) ?? 0) + 1);
+          if (defaultClassId && ann.classId === defaultClassId) {
+            unassigned += 1;
+          }
+        }
+        const total = img.annotations.length;
+        return {
+          id: img.id,
+          name: img.name,
+          total,
+          unassigned,
+          assigned: Math.max(0, total - unassigned),
+        };
+      })
+      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+    const totalAnnotations = perImageRows.reduce((sum, row) => sum + row.total, 0);
+    const totalUnassigned = perImageRows.reduce((sum, row) => sum + row.unassigned, 0);
+    const classRows = classes
+      .map((cls) => {
+        const count = classCountById.get(cls.id) ?? 0;
+        const percentage = totalAnnotations > 0 ? (count / totalAnnotations) * 100 : 0;
+        return {
+          id: cls.id,
+          name: cls.name,
+          color: cls.color,
+          isDefault: Boolean(cls.isDefault),
+          count,
+          percentage,
+        };
+      })
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    return {
+      imagesCount: statisticsImages.length,
+      classesCount: classes.length,
+      totalAnnotations,
+      totalUnassigned,
+      classRows,
+      perImageRows,
+    };
+  }, [classes, statisticsImages]);
+
   const getExportPreviewStats = (
     request: Pick<ExportRequest, 'scope' | 'includeUnassigned' | 'includeImagesWithoutAnnotations'>
   ): {
@@ -547,6 +601,12 @@ export function TopBar(): JSX.Element {
     if (selectedImage) return 'currentImage';
     if (hasBookmarkedImages) return 'bookmarkedImages';
     return 'allImages';
+  };
+
+  const openStatisticsDialog = (): void => {
+    setStatisticsScope(defaultExportScope());
+    setStatisticsOpen(true);
+    closeMenus();
   };
 
   const openSingleExportDialog = (format: 'yolo' | 'coco' | 'voc'): void => {
@@ -957,6 +1017,12 @@ export function TopBar(): JSX.Element {
         return;
       }
 
+      if (statisticsOpen) {
+        e.preventDefault();
+        setStatisticsOpen(false);
+        return;
+      }
+
       if (exportDialog) {
         e.preventDefault();
         setExportDialog(null);
@@ -994,6 +1060,7 @@ export function TopBar(): JSX.Element {
     videoImportBusy,
     videoImportDialog,
     annotationScopeDialog,
+    statisticsOpen,
     workspaceClassDialog,
   ]);
 
@@ -1003,6 +1070,7 @@ export function TopBar(): JSX.Element {
       !videoImportDialog &&
       !workspaceClassDialog &&
       !annotationScopeDialog &&
+      !statisticsOpen &&
       !exportDialog &&
       !pendingExport
     ) return;
@@ -1016,6 +1084,7 @@ export function TopBar(): JSX.Element {
     videoImportDialog,
     workspaceClassDialog,
     annotationScopeDialog,
+    statisticsOpen,
     exportDialog,
     pendingExport,
   ]);
@@ -1181,9 +1250,128 @@ export function TopBar(): JSX.Element {
           >
             Settings
           </button>
+          <button onClick={openStatisticsDialog}>Statistics</button>
         </div>
         <div className="topbar-status">{statusText ?? ''}</div>
       </header>
+      {statisticsOpen && (
+        <div className="modal-backdrop" onClick={() => setStatisticsOpen(false)}>
+          <div className="modal-card statistics-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h3>Statistics</h3>
+            <div className="row">
+              <button
+                className={statisticsScope === 'currentImage' ? 'active' : ''}
+                onClick={() => setStatisticsScope('currentImage')}
+                disabled={!selectedImage}
+              >
+                Current image
+              </button>
+              <button
+                className={statisticsScope === 'bookmarkedImages' ? 'active' : ''}
+                onClick={() => setStatisticsScope('bookmarkedImages')}
+                disabled={!hasBookmarkedImages}
+              >
+                Bookmarked images
+              </button>
+              <button
+                className={statisticsScope === 'allImages' ? 'active' : ''}
+                onClick={() => setStatisticsScope('allImages')}
+                disabled={!hasImages}
+              >
+                All images
+              </button>
+            </div>
+            <div className="statistics-summary-grid">
+              <div className="statistics-card">
+                <div className="statistics-card-label">Images</div>
+                <div className="statistics-card-value">{statisticsData.imagesCount}</div>
+              </div>
+              <div className="statistics-card">
+                <div className="statistics-card-label">Classes</div>
+                <div className="statistics-card-value">{statisticsData.classesCount}</div>
+              </div>
+              <div className="statistics-card">
+                <div className="statistics-card-label">Annotations (total)</div>
+                <div className="statistics-card-value">{statisticsData.totalAnnotations}</div>
+              </div>
+              <div className="statistics-card">
+                <div className="statistics-card-label">Unassigned annotations</div>
+                <div className="statistics-card-value">{statisticsData.totalUnassigned}</div>
+              </div>
+            </div>
+
+            <section className="statistics-section">
+              <h4>Class instances</h4>
+              <div className="statistics-table-wrap">
+                <table className="statistics-table">
+                  <thead>
+                    <tr>
+                      <th>Class</th>
+                      <th>Instances</th>
+                      <th>Percent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statisticsData.classRows.map((row) => (
+                      <tr key={row.id}>
+                        <td className="statistics-name-cell" title={row.name}>
+                          <span className="color-dot" style={{ background: row.color }} />
+                          <span className="statistics-name-text">
+                            {row.name}
+                            {row.isDefault ? ' (Unassigned)' : ''}
+                          </span>
+                        </td>
+                        <td className="statistics-num">{row.count}</td>
+                        <td className="statistics-num">{row.percentage.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="statistics-section">
+              <h4>Per-image annotations</h4>
+              <div className="statistics-table-wrap">
+                <table className="statistics-table">
+                  <thead>
+                    <tr>
+                      <th>Image</th>
+                      <th>Annotations</th>
+                      <th>Unassigned</th>
+                      <th>Assigned</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statisticsData.perImageRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="statistics-empty-cell">
+                          No images in selected scope.
+                        </td>
+                      </tr>
+                    ) : (
+                      statisticsData.perImageRows.map((row) => (
+                        <tr key={row.id}>
+                          <td className="statistics-name-cell" title={row.name}>
+                            <span className="statistics-name-text">{row.name}</span>
+                          </td>
+                          <td className="statistics-num">{row.total}</td>
+                          <td className="statistics-num">{row.unassigned}</td>
+                          <td className="statistics-num">{row.assigned}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <div className="row dialog-actions">
+              <button onClick={() => setStatisticsOpen(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
       {settingsOpen && (
         <div className="modal-backdrop">
           <div className="modal-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
