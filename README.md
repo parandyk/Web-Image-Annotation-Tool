@@ -27,6 +27,8 @@ YOLO, COCO and Pascal VOC formats are currently supported for both importing and
 The tool demo is available at:
 https://parandyk.github.io/Web-Image-Annotation-Tool/
 
+Automatic annotation using neural network inference coming soon!
+
 ## Disclaimer
 
 This tool was developed nearly exclusively using OpenAI Codex.
