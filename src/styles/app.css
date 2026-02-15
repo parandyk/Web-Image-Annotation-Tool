@@ -746,7 +746,7 @@ label.inline-check {
 
 .image-list-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: stretch;
 }
 
