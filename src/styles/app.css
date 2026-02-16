@@ -944,23 +944,30 @@ label.inline-check {
   position: fixed;
   inset: 0;
   background: rgba(3, 7, 18, 0.7);
-  display: grid;
-  place-items: center;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
   z-index: 220;
 }
 
 .modal-card {
-  width: min(560px, 92vw);
-  max-height: 85vh;
+  width: min(560px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
   overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg-1);
   padding: 14px;
+  margin: 0;
 }
 
 .statistics-modal {
-  width: min(940px, 96vw);
+  width: min(940px, calc(100vw - 16px));
 }
 
 .statistics-summary-grid {
