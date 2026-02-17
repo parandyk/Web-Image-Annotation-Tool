@@ -81,8 +81,8 @@ export function getDefaultViewState(): ViewState {
     dragDeadzonePx: 4,
     inferenceEnabled: false,
     inferenceConfidenceThreshold: 0.5,
-    inferenceModelUrl: import.meta.env.BASE_URL + 'models/yolo26n.onnx',
-    // inferenceModelUrl: '/models/yolo26n.onnx',
+    // inferenceModelUrl: import.meta.env.BASE_URL + 'models/yolo26n.onnx',
+    inferenceModelUrl: 'models/yolo26n.onnx',
   };
 }
 
