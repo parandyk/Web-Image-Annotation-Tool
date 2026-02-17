@@ -210,6 +210,26 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
     return selectedAnnotationIds.filter((id) => available.has(id));
   }, [annotations, selectedAnnotationIds]);
 
+  const imageById = useMemo(() => new Map(images.map((img) => [img.id, img])), [images]);
+
+  const imageListMenuIds = useMemo(() => {
+    if (!listMenu || listMenu.type !== 'image') return [];
+    return selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+  }, [listMenu, selectedImageIds]);
+
+  const imageListMenuBookmarkState = useMemo(() => {
+    let hasBookmarked = false;
+    let hasUnbookmarked = false;
+    for (const id of imageListMenuIds) {
+      const img = imageById.get(id);
+      if (!img) continue;
+      if (img.isBookmarked) hasBookmarked = true;
+      else hasUnbookmarked = true;
+      if (hasBookmarked && hasUnbookmarked) break;
+    }
+    return { hasBookmarked, hasUnbookmarked };
+  }, [imageById, imageListMenuIds]);
+
   const isSelectionModifier = (evt: { ctrlKey?: boolean; metaKey?: boolean }): boolean =>
     Boolean(evt.ctrlKey || evt.metaKey);
 
@@ -795,8 +815,9 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
           {listMenu.type === 'image' ? (
             <>
               <button
+                disabled={!imageListMenuBookmarkState.hasUnbookmarked}
                 onClick={() => {
-                  const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                  const ids = imageListMenuIds.length > 0 ? imageListMenuIds : [listMenu.id];
                   setImagesBookmarked(ids, true);
                   setListMenu(null);
                 }}
@@ -804,8 +825,9 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
                 Bookmark selected
               </button>
               <button
+                disabled={!imageListMenuBookmarkState.hasBookmarked}
                 onClick={() => {
-                  const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                  const ids = imageListMenuIds.length > 0 ? imageListMenuIds : [listMenu.id];
                   setImagesBookmarked(ids, false);
                   setListMenu(null);
                 }}
@@ -814,7 +836,7 @@ export function ImagesTab({ view = 'all' }: { view?: 'all' | 'images' | 'annotat
               </button>
               <button
                 onClick={() => {
-                  const ids = selectedImageIds.includes(listMenu.id) ? selectedImageIds : [listMenu.id];
+                  const ids = imageListMenuIds.length > 0 ? imageListMenuIds : [listMenu.id];
                   deleteImageIdsWithWarning(ids);
                   setListMenu(null);
                 }}

@@ -21,7 +21,7 @@ export function GeneralTab(): JSX.Element {
     <div className="panel-stack combined-tab">
       <section className="general-coordinates-segment">
         <div className="row between">
-          <h4>Coordinates</h4>
+          <h4>Selected annotation</h4>
           <button className="collapse-toggle" onClick={() => setOpenCoordinates((v) => !v)}>{openCoordinates ? '▼' : '▶'}</button>
         </div>
         {openCoordinates && <div className="segment-scroll"><CoordinatesPanel /></div>}

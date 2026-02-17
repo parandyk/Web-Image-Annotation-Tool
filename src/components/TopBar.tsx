@@ -1650,7 +1650,7 @@ export function TopBar(): JSX.Element {
                   {annotationScopeDialog.type === 'removeAll'
                     ? 'Remove all annotations'
                     : annotationScopeDialog.type === 'visibility'
-                      ? 'Set visibility'
+                      ? 'Toggle visibility'
                       : 'Toggle anchoring'}
                 </h4>
                 <p>Choose scope of this operation.</p>
@@ -1689,7 +1689,8 @@ export function TopBar(): JSX.Element {
                     <div className="row">
                       <button
                         type="button"
-                        className={annotationScopeDialog.visibilityValue !== 'hide' ? 'active' : ''}
+                        className={annotationScopeDialog.visibilityValue === 'show' ? 'active' : ''}
+                        aria-label="Show"
                         onClick={() =>
                           setAnnotationScopeDialog((prev) =>
                             prev && prev.type === 'visibility'
@@ -1703,6 +1704,7 @@ export function TopBar(): JSX.Element {
                       <button
                         type="button"
                         className={annotationScopeDialog.visibilityValue === 'hide' ? 'active' : ''}
+                        aria-label="Hide"
                         onClick={() =>
                           setAnnotationScopeDialog((prev) =>
                             prev && prev.type === 'visibility'
@@ -1723,6 +1725,7 @@ export function TopBar(): JSX.Element {
                       <button
                         type="button"
                         className={annotationScopeDialog.anchoringValue === 'anchor' ? 'active' : ''}
+                        aria-label="Anchor"
                         onClick={() =>
                           setAnnotationScopeDialog((prev) =>
                             prev && prev.type === 'anchoring'
@@ -1736,6 +1739,7 @@ export function TopBar(): JSX.Element {
                       <button
                         type="button"
                         className={annotationScopeDialog.anchoringValue === 'unanchor' ? 'active' : ''}
+                        aria-label="Unanchor"
                         onClick={() =>
                           setAnnotationScopeDialog((prev) =>
                             prev && prev.type === 'anchoring'

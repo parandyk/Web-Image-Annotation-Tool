@@ -946,7 +946,9 @@ label.inline-check {
   background: rgba(3, 7, 18, 0.7);
   display: flex;
   justify-content: center;
+  justify-content: safe center;
   align-items: flex-start;
+  align-items: safe center;
   overflow-y: auto;
   overflow-x: hidden;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
