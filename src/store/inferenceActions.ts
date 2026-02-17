@@ -53,7 +53,8 @@ export function createInferenceActions(
         return;
       }
 
-      const modelUrl = state.inferenceModelUrl.trim();
+      // const modelUrl = state.inferenceModelUrl.trim();
+      const modelUrl = (import.meta.env.BASE_URL + state.inferenceModelUrl.trim()).trim();
       if (!modelUrl) {
         set({ statusText: 'Configure a model URL/path in Settings before running inference.' });
         return;
