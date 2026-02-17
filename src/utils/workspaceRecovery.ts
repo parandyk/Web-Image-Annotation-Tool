@@ -9,6 +9,7 @@ export type WorkspaceRecoveryViewState = {
   interactionMode: 'add' | 'edit';
   addingMode: 'click' | 'drag';
   classAssignmentMode: 'activeClass' | 'deferred';
+  fastClassSwapMode: boolean;
   imageSort:
     | 'none'
     | 'alphabetical'
@@ -46,6 +47,9 @@ export type WorkspaceRecoveryViewState = {
   showMinimap: boolean;
   minimapLocation: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight' | 'sidebar';
   dragDeadzonePx: number;
+  inferenceEnabled: boolean;
+  inferenceConfidenceThreshold: number;
+  inferenceModelUrl: string;
 };
 
 export type WorkspaceRecoveryImage = {

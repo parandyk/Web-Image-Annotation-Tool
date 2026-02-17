@@ -185,6 +185,7 @@ export function TopBar(): JSX.Element {
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const classAssignmentMode = useAppStore((s) => s.classAssignmentMode);
+  const fastClassSwapMode = useAppStore((s) => s.fastClassSwapMode);
   const showLabels = useAppStore((s) => s.showLabels);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const lineThickness = useAppStore((s) => s.lineThickness);
@@ -194,6 +195,7 @@ export function TopBar(): JSX.Element {
   const showMinimap = useAppStore((s) => s.showMinimap);
   const minimapLocation = useAppStore((s) => s.minimapLocation);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
+  const inferenceModelUrl = useAppStore((s) => s.inferenceModelUrl);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
   const suppressDeleteAnn = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const suppressDeleteImage = useAppStore((s) => s.suppressDeleteImageWarningDialog);
@@ -202,6 +204,7 @@ export function TopBar(): JSX.Element {
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const setAddingMode = useAppStore((s) => s.setAddingMode);
   const setClassAssignmentMode = useAppStore((s) => s.setClassAssignmentMode);
+  const setFastClassSwapMode = useAppStore((s) => s.setFastClassSwapMode);
   const setShowLabels = useAppStore((s) => s.setShowLabels);
   const setBBoxOpacity = useAppStore((s) => s.setBBoxOpacity);
   const setLineThickness = useAppStore((s) => s.setLineThickness);
@@ -211,6 +214,7 @@ export function TopBar(): JSX.Element {
   const setShowMinimap = useAppStore((s) => s.setShowMinimap);
   const setMinimapLocation = useAppStore((s) => s.setMinimapLocation);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
+  const setInferenceModelUrl = useAppStore((s) => s.setInferenceModelUrl);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
   const setSuppressDeleteAnn = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteImage = useAppStore((s) => s.setSuppressDeleteImageWarningDialog);
@@ -383,6 +387,7 @@ export function TopBar(): JSX.Element {
     interactionMode,
     addingMode,
     classAssignmentMode,
+    fastClassSwapMode,
     showLabels,
     bboxOpacity,
     lineThickness,
@@ -392,6 +397,7 @@ export function TopBar(): JSX.Element {
     showMinimap,
     minimapLocation,
     dragDeadzonePx,
+    inferenceModelUrl,
     exportIncludeUnassigned,
     suppressDeleteAnn,
     suppressDeleteImage,
@@ -402,6 +408,7 @@ export function TopBar(): JSX.Element {
     setInteractionMode(snap.interactionMode as 'add' | 'edit');
     setAddingMode(snap.addingMode as 'click' | 'drag');
     setClassAssignmentMode(snap.classAssignmentMode as 'activeClass' | 'deferred');
+    setFastClassSwapMode(Boolean(snap.fastClassSwapMode));
     setShowLabels(Boolean(snap.showLabels));
     setBBoxOpacity(Number(snap.bboxOpacity));
     setLineThickness(Number(snap.lineThickness));
@@ -418,6 +425,11 @@ export function TopBar(): JSX.Element {
         | 'sidebar'
     );
     setDragDeadzonePx(Number(snap.dragDeadzonePx));
+    setInferenceModelUrl(
+      typeof snap.inferenceModelUrl === 'string' && snap.inferenceModelUrl.trim().length > 0
+        ? snap.inferenceModelUrl
+        : '/models/yolo26n.onnx'
+    );
     setExportIncludeUnassigned(Boolean(snap.exportIncludeUnassigned));
     setSuppressDeleteAnn(Boolean(snap.suppressDeleteAnn));
     setSuppressDeleteImage(Boolean(snap.suppressDeleteImage));
@@ -1427,6 +1439,7 @@ export function TopBar(): JSX.Element {
                   setInteractionMode('edit');
                   setAddingMode('click');
                   setClassAssignmentMode('activeClass');
+                  setFastClassSwapMode(false);
                   setShowLabels(true);
                   setBBoxOpacity(0.2);
                   setLineThickness(2);
@@ -1434,6 +1447,7 @@ export function TopBar(): JSX.Element {
                   setDrawBoxBorder(true);
                   setShowCrosshair(true);
                   setDragDeadzonePx(4);
+                  setInferenceModelUrl('/models/yolo26n.onnx');
                   setExportIncludeUnassigned(false);
                   setSuppressDeleteAnn(false);
                   setSuppressDeleteImage(false);

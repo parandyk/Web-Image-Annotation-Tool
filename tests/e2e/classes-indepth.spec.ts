@@ -6,6 +6,7 @@ import {
   drawByDragOnCanvas,
   openImagesViaTopbar,
   openSidebarTab,
+  setApplicationMode,
   setAddingMode,
 } from './helpers/app';
 
@@ -300,6 +301,38 @@ test.describe('Classes behavior in-depth', () => {
 
     await openSidebarTab(page, 'Annotations');
     await expect(annotationItems(page)).toHaveCount(0);
+  });
+
+  test('fast class swap mode reassigns selected annotations via class clicks and class hotkeys in edit mode', async ({ page }) => {
+    await seedImageWithTwoAnnotations(page);
+    await importClasses(page, ['Vehicle', 'Person']);
+    await setApplicationMode(page, 'Edit');
+
+    await openSidebarTab(page, 'Classes');
+    const vehicleCard = classCard(page, 'Vehicle');
+    await vehicleCard.locator('.class-hotkey-btn').click();
+    await expect(vehicleCard.locator('.class-hotkey-btn')).toHaveText('Press key...');
+    await page.keyboard.press('v');
+    await expect(vehicleCard.locator('.class-hotkey-btn')).toHaveText('Key: V');
+
+    await openSidebarTab(page, 'Annotations');
+    const rows = annotationItems(page);
+    const modifier = classSelectionModifier();
+    await rows.nth(0).locator('.annotation-title-btn').click();
+    await rows.nth(1).locator('.annotation-title-btn').click({ modifiers: [modifier] });
+    await expect(page.locator('.annotation-item.selected')).toHaveCount(2);
+
+    await openSidebarTab(page, 'Classes');
+    const fastSwapToggle = page.getByRole('button', { name: /^Fast class swap:/ }).first();
+    await fastSwapToggle.click();
+    await expect(fastSwapToggle).toHaveText('Fast class swap: On');
+    await classCard(page, 'Person').locator('.class-name-btn').click();
+
+    await openSidebarTab(page, 'Annotations');
+    await expect(page.locator('.annotation-title-btn', { hasText: 'Person' })).toHaveCount(2);
+
+    await page.keyboard.press('v');
+    await expect(page.locator('.annotation-title-btn', { hasText: 'Vehicle' })).toHaveCount(2);
   });
 
   test('class hotkeys support assign, conflict handling, clear, and active-class drawing', async ({ page }) => {

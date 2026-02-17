@@ -35,11 +35,14 @@ type RestoredWorkspacePatch = ViewState &
     | 'selectedImageId'
     | 'selectedAnnotationId'
     | 'selectedAnnotationIds'
+    | 'selectedPendingDetectionIds'
     | 'liveDraftBBox'
     | 'liveDraftClassId'
     | 'deferredLastAnnotationId'
     | 'deferredLastImageId'
     | 'nextDisplayIdByClass'
+    | 'pendingDetectionsByImageId'
+    | 'inferenceBusy'
   >;
 
 export function formatWorkspaceImportStatus(
@@ -61,11 +64,14 @@ export function buildImportedWorkspacePatch(
     selectedImageId: parsed.selectedImageId,
     selectedAnnotationId: parsed.selectedAnnotationId,
     selectedAnnotationIds: parsed.selectedAnnotationIds,
+    selectedPendingDetectionIds: [],
     liveDraftBBox: null,
     liveDraftClassId: null,
     deferredLastAnnotationId: null,
     deferredLastImageId: null,
     nextDisplayIdByClass: parsed.nextDisplayIdByClass,
+    pendingDetectionsByImageId: {},
+    inferenceBusy: false,
   };
 }
 
@@ -80,11 +86,13 @@ export function buildRecoveryWorkspacePatch(
     selectedImageId: restored.selectedImageId,
     selectedAnnotationId: restored.selectedAnnotationId,
     selectedAnnotationIds: restored.selectedAnnotationIds,
+    selectedPendingDetectionIds: [],
     liveDraftBBox: null,
     liveDraftClassId: null,
     deferredLastAnnotationId: null,
     deferredLastImageId: null,
     nextDisplayIdByClass: restored.nextDisplayIdByClass,
+    pendingDetectionsByImageId: {},
+    inferenceBusy: false,
   };
 }
-

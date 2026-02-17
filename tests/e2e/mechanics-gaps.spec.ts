@@ -214,7 +214,12 @@ test.describe('Mechanical interaction gaps', () => {
     await page.keyboard.press('Delete');
     const dialog = modalByHeading(page, 'Delete annotation');
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click({ force: true });
+    const cancelButton = dialog.getByRole('button', { name: 'Cancel', exact: true });
+    await expect(cancelButton).toBeVisible();
+    await expect(cancelButton).toBeEnabled();
+    await cancelButton.focus();
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeHidden();
 
     await openSidebarTab(page, 'Annotations');
     await expect(annotationItems(page)).toHaveCount(3);
@@ -222,7 +227,11 @@ test.describe('Mechanical interaction gaps', () => {
     await focusCanvas(page);
     await page.keyboard.press('Delete');
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: 'Delete', exact: true }).click({ force: true });
+    const deleteButton = dialog.getByRole('button', { name: 'Delete', exact: true });
+    await expect(deleteButton).toBeVisible();
+    await expect(deleteButton).toBeEnabled();
+    await deleteButton.focus();
+    await page.keyboard.press('Enter');
 
     await openSidebarTab(page, 'Annotations');
     await expect(annotationItems(page)).toHaveCount(0);

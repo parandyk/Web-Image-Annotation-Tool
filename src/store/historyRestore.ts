@@ -10,6 +10,7 @@ type HistoryState = {
   selectedAnnotationId: string | null;
   selectedAnnotationIds: string[];
   nextDisplayIdByClass: Record<string, number>;
+  pendingDetectionsByImageId: Snapshot['pendingDetectionsByImageId'];
   undoStack: Snapshot[];
   redoStack: Snapshot[];
 };
@@ -17,20 +18,24 @@ type HistoryState = {
 type HistoryRestorePatch = {
   restored: Snapshot;
   images: ImageItem[];
+  selectedPendingDetectionIds: string[];
   liveDraftBBox: null;
   liveDraftClassId: null;
   deferredLastAnnotationId: null;
   deferredLastImageId: null;
+  inferenceBusy: false;
   undoStack: Snapshot[];
   redoStack: Snapshot[];
 };
 
 type HistoryAppliedState = Snapshot & {
   images: ImageItem[];
+  selectedPendingDetectionIds: string[];
   liveDraftBBox: null;
   liveDraftClassId: null;
   deferredLastAnnotationId: null;
   deferredLastImageId: null;
+  inferenceBusy: false;
   undoStack: Snapshot[];
   redoStack: Snapshot[];
 };
@@ -47,10 +52,12 @@ export function buildUndoRestorePatch(state: HistoryState): HistoryRestorePatch 
   return {
     restored,
     images: hydratedImages,
+    selectedPendingDetectionIds: [],
     liveDraftBBox: null,
     liveDraftClassId: null,
     deferredLastAnnotationId: null,
     deferredLastImageId: null,
+    inferenceBusy: false,
     undoStack: trimmedUndo,
     redoStack: [...state.redoStack, cloneSnapshot(current)],
   };
@@ -68,10 +75,12 @@ export function buildRedoRestorePatch(state: HistoryState): HistoryRestorePatch 
   return {
     restored,
     images: hydratedImages,
+    selectedPendingDetectionIds: [],
     liveDraftBBox: null,
     liveDraftClassId: null,
     deferredLastAnnotationId: null,
     deferredLastImageId: null,
+    inferenceBusy: false,
     redoStack: trimmedRedo,
     undoStack: [...state.undoStack, cloneSnapshot(current)],
   };
@@ -83,10 +92,12 @@ export function buildAppliedHistoryRestoreState(
   return {
     ...patch.restored,
     images: patch.images,
+    selectedPendingDetectionIds: patch.selectedPendingDetectionIds,
     liveDraftBBox: patch.liveDraftBBox,
     liveDraftClassId: patch.liveDraftClassId,
     deferredLastAnnotationId: patch.deferredLastAnnotationId,
     deferredLastImageId: patch.deferredLastImageId,
+    inferenceBusy: patch.inferenceBusy,
     undoStack: patch.undoStack,
     redoStack: patch.redoStack,
   };

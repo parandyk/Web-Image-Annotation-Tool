@@ -1,7 +1,4 @@
-import { expect, test, type FilePayload, type Locator, type Page } from '@playwright/test';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   annotationItems,
   bmpFile,
@@ -11,72 +8,7 @@ import {
   openSidebarTab,
   setAddingMode,
 } from './helpers/app';
-
-function textFile(name: string, content: string, mimeType = 'text/plain'): FilePayload {
-  return {
-    name,
-    mimeType,
-    buffer: Buffer.from(content, 'utf8'),
-  };
-}
-
-function topbar(page: Page): Locator {
-  return page.locator('header.topbar');
-}
-
-const DIRECTORY_ACTIONS = new Set(['Open image folder', 'Import dataset folder']);
-
-async function openTopbarMenu(page: Page, menuName: 'Open' | 'Import' | 'Export' | 'Edit'): Promise<Locator> {
-  await topbar(page).getByRole('button', { name: menuName, exact: true }).click();
-  const menu = page.locator('.menu.open .menu-popover').first();
-  await expect(menu).toBeVisible();
-  return menu;
-}
-
-function asUploadList(files: FilePayload | FilePayload[]): FilePayload[] {
-  return Array.isArray(files) ? files : [files];
-}
-
-function toUploadBuffer(file: FilePayload): Buffer {
-  return Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer);
-}
-
-async function createUploadDirectory(files: FilePayload | FilePayload[]): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pw-upload-'));
-  for (const file of asUploadList(files)) {
-    const nestedPath = file.name.split('/').join(path.sep);
-    const outputPath = path.join(dir, nestedPath);
-    const outputDir = path.dirname(outputPath);
-    await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(outputPath, toUploadBuffer(file));
-  }
-  return dir;
-}
-
-async function chooseFilesFromMenu(
-  page: Page,
-  menuName: 'Open' | 'Import',
-  actionName: string,
-  files: FilePayload | FilePayload[]
-): Promise<void> {
-  const menu = await openTopbarMenu(page, menuName);
-  const chooserPromise = page.waitForEvent('filechooser');
-  await menu.getByRole('button', { name: actionName, exact: true }).click();
-  const chooser = await chooserPromise;
-  if (DIRECTORY_ACTIONS.has(actionName)) {
-    const dir = await createUploadDirectory(files);
-    await chooser.setFiles(dir);
-    return;
-  }
-  await chooser.setFiles(files);
-}
-
-function modalByHeading(page: Page, heading: string): Locator {
-  return page
-    .locator('.modal-card')
-    .filter({ has: page.getByRole('heading', { name: heading }) })
-    .first();
-}
+import { chooseFilesFromMenu, modalByHeading, openTopbarMenu, textFile, topbar } from './helpers/topbar';
 
 async function openEditAndClick(page: Page, actionName: string): Promise<void> {
   const menu = await openTopbarMenu(page, 'Edit');

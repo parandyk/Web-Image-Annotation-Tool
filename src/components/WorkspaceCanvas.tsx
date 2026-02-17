@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Layer, Rect, Stage, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { createPortal } from 'react-dom';
-import { ImageItem, BBox } from '../domain/types';
+import { ImageItem, BBox, InferenceDetection } from '../domain/types';
 import { useAppStore } from '../store/appStore';
 import { PortalMenu } from './common/PortalMenu';
 
@@ -14,6 +14,7 @@ const MIN_LABEL_SCREEN_WIDTH_PX = 56;
 const MIN_LABEL_SCREEN_HEIGHT_PX = 16;
 const MIN_ANCHOR_SCREEN_WIDTH_PX = 18;
 const MIN_ANCHOR_SCREEN_HEIGHT_PX = 12;
+const EMPTY_DETECTIONS: InferenceDetection[] = [];
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -157,6 +158,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const classAssignmentMode = useAppStore((s) => s.classAssignmentMode);
+  const fastClassSwapMode = useAppStore((s) => s.fastClassSwapMode);
   const selectedAnnotationId = useAppStore((s) => s.selectedAnnotationId);
   const selectedAnnotationIds = useAppStore((s) => s.selectedAnnotationIds);
   const selectedClassId = useAppStore((s) => s.selectedClassId);
@@ -172,6 +174,9 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const showLabels = useAppStore((s) => s.showLabels);
   const nextDisplayIdByClass = useAppStore((s) => s.nextDisplayIdByClass);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
+  const pendingDetectionsByImageId = useAppStore((s) => s.pendingDetectionsByImageId);
+  const pendingDetections = pendingDetectionsByImageId[image.id] ?? EMPTY_DETECTIONS;
+  const selectedDetectionIds = useAppStore((s) => s.selectedPendingDetectionIds);
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteAnnotationWarning = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
 
@@ -192,6 +197,8 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const setAnnotationsClass = useAppStore((s) => s.setAnnotationsClass);
   const setLiveDraftBBox = useAppStore((s) => s.setLiveDraftBBox);
   const setLiveDraftClassId = useAppStore((s) => s.setLiveDraftClassId);
+  const rejectDetections = useAppStore((s) => s.rejectDetections);
+  const setSelectedDetectionIds = useAppStore((s) => s.setSelectedPendingDetectionIds);
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
   const [viewScale, setViewScale] = useState(1);
@@ -207,6 +214,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
   const [marqueeStart, setMarqueeStart] = useState<{ x: number; y: number } | null>(null);
   const [marqueeBBox, setMarqueeBBox] = useState<BBox | null>(null);
   const [marqueeSeedSelection, setMarqueeSeedSelection] = useState<string[]>([]);
+  const [marqueeSeedSuggestionSelection, setMarqueeSeedSuggestionSelection] = useState<string[]>([]);
   const [annotationInteraction, setAnnotationInteraction] = useState(false);
   const [canvasDragMode, setCanvasDragMode] = useState<'annotate' | 'pan'>('annotate');
   const [crosshairImgPos, setCrosshairImgPos] = useState<{ x: number; y: number }>({ x: image.width / 2, y: image.height / 2 });
@@ -242,6 +250,17 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
 
   const isMultiSelectModifierActive = (evt: { ctrlKey?: boolean; metaKey?: boolean; getModifierState?: (keyArg: string) => boolean }): boolean =>
     Boolean(evt.ctrlKey || evt.metaKey || evt.getModifierState?.('Control'));
+
+  const toggleSuggestionSelection = (detectionId: string, additive: boolean): void => {
+    if (!additive) {
+      setSelectedDetectionIds([detectionId]);
+      return;
+    }
+    const next = selectedDetectionIds.includes(detectionId)
+      ? selectedDetectionIds.filter((id) => id !== detectionId)
+      : [...selectedDetectionIds, detectionId];
+    setSelectedDetectionIds(next);
+  };
 
   const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
   const defaultClassId = useMemo(
@@ -342,6 +361,7 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     setMarqueeStart(null);
     setMarqueeBBox(null);
     setMarqueeSeedSelection([]);
+    setMarqueeSeedSuggestionSelection([]);
   }, [image.id, image.width, image.height, stageSize.height, stageSize.width, zoomBounds.fitScale, zoomBounds.maxScale, zoomBounds.minScale]);
 
   useEffect(() => {
@@ -424,9 +444,45 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
         setMarqueeStart(null);
         setMarqueeBBox(null);
         setMarqueeSeedSelection([]);
+        setMarqueeSeedSuggestionSelection([]);
+        setSelectedDetectionIds([]);
         abortDraft();
         clearAnnotationSelection();
         return;
+      }
+
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const canCycleSuggestions =
+          selectedIdsForImage.length === 0 &&
+          pendingDetections.length > 0 &&
+          (selectedDetectionIds.length > 0 || image.annotations.length === 0);
+        if (canCycleSuggestions) {
+          const selectedSet = new Set(selectedDetectionIds);
+          const orderedSelection = pendingDetections
+            .filter((det) => selectedSet.has(det.id))
+            .map((det) => det.id);
+          const activeId =
+            orderedSelection[orderedSelection.length - 1] ??
+            selectedDetectionIds[selectedDetectionIds.length - 1] ??
+            null;
+          const currentIndex = activeId ? pendingDetections.findIndex((det) => det.id === activeId) : -1;
+          const length = pendingDetections.length;
+          const nextIndex =
+            currentIndex < 0
+              ? e.key === 'ArrowDown'
+                ? 0
+                : length - 1
+              : e.key === 'ArrowDown'
+                ? (currentIndex + 1 + length) % length
+                : (currentIndex - 1 + length) % length;
+          const nextId = pendingDetections[nextIndex]?.id;
+          if (nextId) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedDetectionIds([nextId]);
+            return;
+          }
+        }
       }
 
       const isMac = navigator.platform.toLowerCase().includes('mac');
@@ -441,39 +497,63 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
         if (e.repeat) return;
         if (active?.closest('.sidebar,.topbar,.menu-popover,.modal-card,.annotation-menu')) return;
         if (document.querySelector('.modal-backdrop')) return;
-        if (selectedIdsForImage.length === 0) return;
+        if (selectedIdsForImage.length === 0 && selectedDetectionIds.length === 0) return;
         e.preventDefault();
-        if (suppressDeleteAnnotationWarning) {
-          if (selectedIdsForImage.length > 1) deleteSelectedAnnotations();
-          else deleteAnnotation(selectedIdsForImage[0]);
-        } else {
-          setConfirmDeleteAnnIds([...selectedIdsForImage]);
+
+        if (selectedIdsForImage.length > 0) {
+          if (suppressDeleteAnnotationWarning) {
+            if (selectedIdsForImage.length > 1) deleteSelectedAnnotations();
+            else deleteAnnotation(selectedIdsForImage[0]);
+          } else {
+            setConfirmDeleteAnnIds([...selectedIdsForImage]);
+          }
+          setMenu(null);
+          setSwapClassAnnIds(null);
+          return;
         }
-        setMenu(null);
-        setSwapClassAnnIds(null);
+
+        // Delete on selected AI suggestions rejects them from the pending inferred group.
+        const selectedSuggestionSet = new Set(selectedDetectionIds);
+        const orderedSelection = pendingDetections
+          .filter((det) => selectedSuggestionSet.has(det.id))
+          .map((det) => det.id);
+        rejectDetections(orderedSelection);
+        setSelectedDetectionIds([]);
         return;
       }
 
-      if (interactionMode !== 'add') return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length !== 1) return;
       const hotkey = e.key.toUpperCase();
       if (!/^[A-Z0-9]$/.test(hotkey)) return;
       const classId = classHotkeyMap.get(hotkey);
       if (!classId) return;
+      if (interactionMode === 'edit' && fastClassSwapMode) {
+        if (selectedIdsForImage.length === 0) return;
+        e.preventDefault();
+        setAnnotationsClass(selectedIdsForImage, classId);
+        return;
+      }
+      if (interactionMode !== 'add') return;
       e.preventDefault();
       selectClass(classId);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [
     classHotkeyMap,
     clearAnnotationSelection,
     deleteAnnotation,
     deleteSelectedAnnotations,
+    fastClassSwapMode,
+    image.annotations,
     interactionMode,
+    pendingDetections,
+    rejectDetections,
     selectAllAnnotationsCurrentImage,
     selectClass,
+    setAnnotationsClass,
+    selectedDetectionIds,
     selectedIdsForImage,
     suppressDeleteAnnotationWarning,
   ]);
@@ -519,6 +599,23 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     // Draw selected annotations last so they remain mouse-interactable when overlapped.
     return [...unselected, ...selected];
   }, [selectedIdsForImage, visibleAnnotations]);
+
+  const pendingDetectionIdSet = useMemo(
+    () => new Set(pendingDetections.map((det) => det.id)),
+    [pendingDetections]
+  );
+
+  useEffect(() => {
+    if (selectedDetectionIds.length === 0) return;
+    const next = selectedDetectionIds.filter((id) => pendingDetectionIdSet.has(id));
+    if (next.length !== selectedDetectionIds.length) {
+      setSelectedDetectionIds(next);
+    }
+  }, [pendingDetectionIdSet, selectedDetectionIds, setSelectedDetectionIds]);
+
+  useEffect(() => {
+    setSelectedDetectionIds([]);
+  }, [image.id]);
 
   const minimapLayout = useMemo(() => {
     // Keep minimap compact and responsive while preserving image aspect ratio.
@@ -677,13 +774,21 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
     const hitIds = visibleAnnotations
       .filter((ann) => boxesIntersect(selectionBox, ann.bbox))
       .map((ann) => ann.id);
+    const hitSuggestionIds = pendingDetections
+      .filter((det) => boxesIntersect(selectionBox, det.bbox))
+      .map((det) => det.id);
     const nextSelection = Array.from(new Set([...marqueeSeedSelection, ...hitIds]));
+    const nextSuggestionSelection = Array.from(
+      new Set([...marqueeSeedSuggestionSelection, ...hitSuggestionIds])
+    );
     const latestId = hitIds[hitIds.length - 1] ?? nextSelection[nextSelection.length - 1] ?? null;
     setAnnotationSelection(nextSelection, latestId);
+    setSelectedDetectionIds(nextSuggestionSelection);
 
     setMarqueeStart(null);
     setMarqueeBBox(null);
     setMarqueeSeedSelection([]);
+    setMarqueeSeedSuggestionSelection([]);
   };
 
   useEffect(() => {
@@ -708,7 +813,18 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', onUp, true);
     };
-  }, [marqueeStart, image.height, image.width, viewPos.x, viewPos.y, viewScale, visibleAnnotations, marqueeSeedSelection]);
+  }, [
+    marqueeStart,
+    image.height,
+    image.width,
+    viewPos.x,
+    viewPos.y,
+    viewScale,
+    visibleAnnotations,
+    pendingDetections,
+    marqueeSeedSelection,
+    marqueeSeedSuggestionSelection,
+  ]);
 
   useEffect(() => {
     // Transformer is enabled only for single, editable, unanchored selection.
@@ -799,8 +915,10 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       setMarqueeStart(clamped);
       setMarqueeBBox({ x: clamped.x, y: clamped.y, width: 0, height: 0 });
       setMarqueeSeedSelection(additive ? selectedIdsForImage : []);
+      setMarqueeSeedSuggestionSelection(additive ? selectedDetectionIds : []);
       if (!additive) {
         clearAnnotationSelection();
+        setSelectedDetectionIds([]);
       }
       return;
     }
@@ -1129,9 +1247,9 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
       <div className="canvas-toolbar">
         <span>
           Mode: {interactionMode} | Adding: {addingMode} | Canvas: {canvasDragMode} | Zoom:{' '}
-          {(viewScale * 100).toFixed(0)}%
+          {(viewScale * 100).toFixed(0)}% | AI pending: {pendingDetections.length}
         </span>
-        <div className="row">
+        <div className="row wrap">
           <button className={canvasDragMode === 'annotate' ? 'active' : ''} onClick={() => setCanvasDragMode('annotate')}>
             Annotate
           </button>
@@ -1192,6 +1310,61 @@ export function WorkspaceCanvas({ image }: { image: ImageItem }): JSX.Element {
         >
           <Layer>
             {imageElement && <KonvaImage image={imageElement} width={image.width} height={image.height} />}
+
+            {pendingDetections.map((det: InferenceDetection) => {
+              const classData = classById.get(det.classId);
+              const isSelectedDetection = selectedDetectionIds.includes(det.id);
+              const strokeColor = isSelectedDetection ? '#fef08a' : '#f59e0b';
+              const labelColor = classData?.color ?? '#f59e0b';
+              const labelText = `AI ${(det.score * 100).toFixed(1)}% ${classData?.name ?? `Class ${det.classIndex + 1}`}`;
+              return (
+                <Group key={`det_${det.id}`}>
+                  <Rect
+                    x={det.bbox.x}
+                    y={det.bbox.y}
+                    width={det.bbox.width}
+                    height={det.bbox.height}
+                    stroke={strokeColor}
+                    strokeWidth={2 / viewScale}
+                    dash={[10 / viewScale, 6 / viewScale]}
+                    fill={isSelectedDetection ? 'rgba(245, 158, 11, 0.18)' : 'rgba(245, 158, 11, 0.08)'}
+                    draggable={false}
+                    listening={interactionMode === 'edit' && canvasDragMode === 'annotate'}
+                    onMouseDown={(e) => {
+                      if (interactionMode !== 'edit') return;
+                      e.cancelBubble = true;
+                    }}
+                    onClick={(e) => {
+                      if (e.evt.button !== 0) return;
+                      if (interactionMode !== 'edit') return;
+                      e.cancelBubble = true;
+                      setMenu(null);
+                      toggleSuggestionSelection(det.id, isMultiSelectModifierActive(e.evt));
+                    }}
+                    onTap={(e) => {
+                      if (interactionMode !== 'edit') return;
+                      e.cancelBubble = true;
+                      setMenu(null);
+                      toggleSuggestionSelection(det.id, false);
+                    }}
+                    onContextMenu={(e) => {
+                      // Suggestions are selected via left click/marquee only.
+                      e.evt.preventDefault();
+                      e.cancelBubble = true;
+                    }}
+                  />
+                  <Text
+                    x={det.bbox.x + 4 / viewScale}
+                    y={Math.max(0, det.bbox.y + 4 / viewScale)}
+                    text={labelText}
+                    fill={labelColor}
+                    fontStyle="bold"
+                    fontSize={12 / viewScale}
+                    listening={false}
+                  />
+                </Group>
+              );
+            })}
 
             {renderOrderedAnnotations.map((ann) => {
               const cls = classById.get(ann.classId);

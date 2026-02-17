@@ -6,11 +6,26 @@ type SettingsTabProps = {
   variant?: 'sidebar' | 'dialog';
 };
 
+const MAX_ONNX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
 export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Element {
   const isDialogVariant = variant === 'dialog';
   const interactionMode = useAppStore((s) => s.interactionMode);
   const addingMode = useAppStore((s) => s.addingMode);
   const classAssignmentMode = useAppStore((s) => s.classAssignmentMode);
+  const fastClassSwapMode = useAppStore((s) => s.fastClassSwapMode);
   const showLabels = useAppStore((s) => s.showLabels);
   const bboxOpacity = useAppStore((s) => s.bboxOpacity);
   const lineThickness = useAppStore((s) => s.lineThickness);
@@ -20,6 +35,7 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const showMinimap = useAppStore((s) => s.showMinimap);
   const minimapLocation = useAppStore((s) => s.minimapLocation);
   const dragDeadzonePx = useAppStore((s) => s.dragDeadzonePx);
+  const inferenceModelUrl = useAppStore((s) => s.inferenceModelUrl);
   const exportIncludeUnassigned = useAppStore((s) => s.exportIncludeUnassigned);
   const suppressDeleteAnnotationWarning = useAppStore((s) => s.suppressDeleteAnnotationWarningDialog);
   const suppressDeleteImageWarning = useAppStore((s) => s.suppressDeleteImageWarningDialog);
@@ -30,6 +46,7 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
   const setAddingMode = useAppStore((s) => s.setAddingMode);
   const setClassAssignmentMode = useAppStore((s) => s.setClassAssignmentMode);
+  const setFastClassSwapMode = useAppStore((s) => s.setFastClassSwapMode);
   const setShowLabels = useAppStore((s) => s.setShowLabels);
   const setBBoxOpacity = useAppStore((s) => s.setBBoxOpacity);
   const setLineThickness = useAppStore((s) => s.setLineThickness);
@@ -39,10 +56,12 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
   const setShowMinimap = useAppStore((s) => s.setShowMinimap);
   const setMinimapLocation = useAppStore((s) => s.setMinimapLocation);
   const setDragDeadzonePx = useAppStore((s) => s.setDragDeadzonePx);
+  const setInferenceModelUrl = useAppStore((s) => s.setInferenceModelUrl);
   const setExportIncludeUnassigned = useAppStore((s) => s.setExportIncludeUnassigned);
   const setSuppressDeleteAnnotation = useAppStore((s) => s.setSuppressDeleteAnnotationWarningDialog);
   const setSuppressDeleteImage = useAppStore((s) => s.setSuppressDeleteImageWarningDialog);
   const setSuppressRemoveClassInstances = useAppStore((s) => s.setSuppressRemoveClassInstancesWarningDialog);
+  const setStatusText = useAppStore((s) => s.setStatusText);
   const setAllAnchoringCurrentImage = useAppStore((s) => s.setAllAnchoringCurrentImage);
   const setAllVisibilityCurrentImage = useAppStore((s) => s.setAllVisibilityCurrentImage);
 
@@ -63,6 +82,7 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
 
   const anchorRef = useRef<HTMLInputElement | null>(null);
   const visibilityRef = useRef<HTMLInputElement | null>(null);
+  const uploadModelInputRef = useRef<HTMLInputElement | null>(null);
   const lastAnchorBulkRef = useRef(false);
   const lastVisibilityBulkRef = useRef(true);
 
@@ -106,6 +126,23 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
     { value: 'sidebar', label: 'Sidebar (general tab)' },
   ];
 
+  const onUploadInferenceModel = (file: File): void => {
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.onnx')) {
+      setStatusText('Inference model upload failed: select a .onnx file.');
+      return;
+    }
+    if (file.size > MAX_ONNX_UPLOAD_BYTES) {
+      setStatusText(
+        `Inference model upload failed: "${file.name}" is ${formatBytes(file.size)} (max ${formatBytes(MAX_ONNX_UPLOAD_BYTES)}).`
+      );
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setInferenceModelUrl(objectUrl);
+    setStatusText(`Loaded ONNX model "${file.name}" (${formatBytes(file.size)}).`);
+  };
+
   return (
     <div className="panel-stack">
       <section>
@@ -130,6 +167,15 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
             Drag
           </button>
         </div>
+      </section>
+
+      <section>
+        <h4>Classes</h4>
+        <label className="inline-check">
+          <input type="checkbox" checked={fastClassSwapMode} onChange={(e) => setFastClassSwapMode(e.target.checked)} />
+          <span>Fast class swap mode</span>
+        </label>
+        <span className="slider-meta">Edit mode: click class names or use class hotkeys to reassign selected annotations.</span>
       </section>
 
       {isDialogVariant && (
@@ -244,6 +290,48 @@ export function SettingsTab({ variant = 'sidebar' }: SettingsTabProps): JSX.Elem
 
       {isDialogVariant && (
         <>
+          <section>
+            <h4>Inference model</h4>
+            <span className="slider-meta">Default local model path: /models/yolo26n.onnx</span>
+            <span className="slider-meta">Maximum uploaded model size: {formatBytes(MAX_ONNX_UPLOAD_BYTES)}</span>
+            <label>
+              Model URL/path
+              <input
+                type="text"
+                value={inferenceModelUrl}
+                placeholder="/models/yolo26n.onnx"
+                onChange={(e) => setInferenceModelUrl(e.target.value)}
+              />
+            </label>
+            <span className="slider-meta">
+              Source: {inferenceModelUrl.startsWith('blob:') ? 'Uploaded ONNX (session-local URL)' : 'Path/URL'}
+            </span>
+            <div className="row wrap">
+              <button onClick={() => uploadModelInputRef.current?.click()}>Upload ONNX model</button>
+              <button
+                disabled={!inferenceModelUrl.startsWith('blob:')}
+                onClick={() => {
+                  setInferenceModelUrl('/models/yolo26n.onnx');
+                  setStatusText('Cleared uploaded inference model. Using default local model path.');
+                }}
+              >
+                Clear uploaded model
+              </button>
+              <input
+                ref={uploadModelInputRef}
+                data-testid="inference-model-upload-input"
+                type="file"
+                accept=".onnx,application/octet-stream"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  if (file) onUploadInferenceModel(file);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </div>
+          </section>
+
           <section>
             <h4>Minimap</h4>
             <label>

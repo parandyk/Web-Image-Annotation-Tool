@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import JSZip from 'jszip';
-import { expect, test, type Download, type FilePayload, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Download, type Locator, type Page, type TestInfo } from '@playwright/test';
 import {
   annotationItems,
   bmpFile,
@@ -10,35 +10,10 @@ import {
   openSidebarTab,
   setAddingMode,
 } from './helpers/app';
-
-function topbar(page: Page): Locator {
-  return page.locator('header.topbar');
-}
-
-function modalByHeading(page: Page, heading: string): Locator {
-  return page
-    .locator('.modal-card')
-    .filter({ has: page.getByRole('heading', { name: heading }) })
-    .first();
-}
+import { importClassesViaTopbar, modalByHeading, openTopbarMenu, topbar } from './helpers/topbar';
 
 function settingsDialog(page: Page): Locator {
   return modalByHeading(page, 'Settings');
-}
-
-function textFile(name: string, content: string, mimeType = 'text/plain'): FilePayload {
-  return {
-    name,
-    mimeType,
-    buffer: Buffer.from(content, 'utf8'),
-  };
-}
-
-async function openTopbarMenu(page: Page, menuName: 'Import' | 'Export'): Promise<Locator> {
-  await topbar(page).getByRole('button', { name: menuName, exact: true }).click();
-  const menu = page.locator('.menu.open .menu-popover').first();
-  await expect(menu).toBeVisible();
-  return menu;
 }
 
 async function openSettings(page: Page): Promise<Locator> {
@@ -49,11 +24,7 @@ async function openSettings(page: Page): Promise<Locator> {
 }
 
 async function importClasses(page: Page, classes: string[]): Promise<void> {
-  const menu = await openTopbarMenu(page, 'Import');
-  const chooserPromise = page.waitForEvent('filechooser');
-  await menu.getByRole('button', { name: 'Import classes', exact: true }).click();
-  const chooser = await chooserPromise;
-  await chooser.setFiles([textFile('classes.txt', `${classes.join('\n')}\n`)]);
+  await importClassesViaTopbar(page, classes);
 }
 
 async function setRangeByLabel(dialog: Locator, labelText: string, value: number): Promise<void> {
@@ -145,6 +116,107 @@ test.describe('Settings dialog and effects', () => {
     await expect(page.locator('.canvas-toolbar > span')).toContainText('Mode: edit | Adding: click');
   });
 
+  test('inference model settings in dialog participate in save/revert flow', async ({ page }) => {
+    const dialog = await openSettings(page);
+    const saveButton = dialog.getByRole('button', { name: 'Save', exact: true });
+    await expect(saveButton).toBeDisabled();
+
+    await dialog.getByLabel('Model URL/path').fill('/models/custom.onnx');
+    await expect(saveButton).toBeEnabled();
+
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+
+    const dialogAfterCancel = await openSettings(page);
+    await expect(dialogAfterCancel.getByLabel('Model URL/path')).toHaveValue('/models/yolo26n.onnx');
+    await dialogAfterCancel.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialogAfterCancel).toBeHidden();
+
+    const dialogPersist = await openSettings(page);
+    await dialogPersist.getByLabel('Model URL/path').fill('/models/custom.onnx');
+    await dialogPersist.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialogPersist).toBeHidden();
+
+    const dialogAfterSave = await openSettings(page);
+    await expect(dialogAfterSave.getByLabel('Model URL/path')).toHaveValue('/models/custom.onnx');
+    await dialogAfterSave.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialogAfterSave).toBeHidden();
+  });
+
+  test('fast class swap checkbox in settings dialog participates in save/revert flow', async ({ page }) => {
+    const dialog = await openSettings(page);
+    const saveButton = dialog.getByRole('button', { name: 'Save', exact: true });
+    const fastSwap = dialog.getByLabel('Fast class swap mode');
+
+    await expect(fastSwap).not.toBeChecked();
+    await expect(saveButton).toBeDisabled();
+
+    await fastSwap.check();
+    await expect(saveButton).toBeEnabled();
+
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+
+    const dialogAfterCancel = await openSettings(page);
+    await expect(dialogAfterCancel.getByLabel('Fast class swap mode')).not.toBeChecked();
+    await dialogAfterCancel.getByLabel('Fast class swap mode').check();
+    await dialogAfterCancel.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialogAfterCancel).toBeHidden();
+
+    const dialogAfterSave = await openSettings(page);
+    await expect(dialogAfterSave.getByLabel('Fast class swap mode')).toBeChecked();
+    await dialogAfterSave.getByRole('button', { name: 'Revert to default', exact: true }).click();
+    await expect(dialogAfterSave.getByLabel('Fast class swap mode')).not.toBeChecked();
+    await dialogAfterSave.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialogAfterSave).toBeHidden();
+  });
+
+  test('inference settings allow uploading local ONNX model file', async ({ page }) => {
+    const dialog = await openSettings(page);
+    const saveButton = dialog.getByRole('button', { name: 'Save', exact: true });
+    await expect(saveButton).toBeDisabled();
+
+    await dialog.getByTestId('inference-model-upload-input').setInputFiles({
+      name: 'tiny-custom.onnx',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.from('ONNX', 'utf8'),
+    });
+
+    await expect(dialog.getByLabel('Model URL/path')).toHaveValue(/^blob:/);
+    await expect(saveButton).toBeEnabled();
+
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+
+    const dialogAfterCancel = await openSettings(page);
+    await expect(dialogAfterCancel.getByLabel('Model URL/path')).toHaveValue('/models/yolo26n.onnx');
+    await dialogAfterCancel.getByRole('button', { name: 'Cancel', exact: true }).click();
+  });
+
+  test('inference controls are available in General tab, while settings dialog keeps only model configuration', async ({ page }) => {
+    await openSidebarTab(page, 'General');
+    const inferenceSection = page.locator('section.general-inference-segment');
+    const generalSettingsSection = page.locator('section.general-settings-segment');
+    await expect(inferenceSection).toBeVisible();
+    await expect(generalSettingsSection.getByLabel('Fast class swap mode')).toBeVisible();
+
+    const inferenceEnabledCheckbox = inferenceSection.getByLabel('Enable model inference');
+    await expect(inferenceEnabledCheckbox).not.toBeChecked();
+    await inferenceEnabledCheckbox.check();
+    await setRangeByLabel(inferenceSection, 'Confidence threshold', 0.73);
+    await expect(
+      inferenceSection.locator('label', { hasText: 'Confidence threshold' }).locator('input[type="range"]')
+    ).toHaveValue('0.73');
+
+    const dialog = await openSettings(page);
+    await expect(dialog.getByLabel('Fast class swap mode')).toBeVisible();
+    await expect(dialog.getByLabel('Enable model inference')).toHaveCount(0);
+    await expect(dialog.locator('label', { hasText: 'Confidence threshold' }).locator('input[type="range"]')).toHaveCount(0);
+    await expect(dialog.getByLabel('Model URL/path')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Upload ONNX model', exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  });
+
   test('settings persist to workspace export and affect crosshair/minimap/export defaults', async ({ page }, testInfo) => {
     await openImagesViaTopbar(page, [bmpFile('settings-persist.bmp', 360, 240, { r: 120, g: 105, b: 165 })]);
 
@@ -153,6 +225,7 @@ test.describe('Settings dialog and effects', () => {
       await selectSettingsButton(dialog, 'Add');
       await selectSettingsButton(dialog, 'Drag');
       await selectSettingsButton(dialog, 'Deferred');
+      await dialog.getByLabel('Fast class swap mode').check();
       await dialog.getByLabel('Show labels').uncheck();
       await dialog.getByLabel('Draw box backgrounds').uncheck();
       await dialog.getByLabel('Draw box borders').uncheck();
@@ -203,6 +276,7 @@ test.describe('Settings dialog and effects', () => {
           interactionMode: string;
           addingMode: string;
           classAssignmentMode: string;
+          fastClassSwapMode: boolean;
           showLabels: boolean;
           bboxOpacity: number;
           lineThickness: number;
@@ -218,6 +292,7 @@ test.describe('Settings dialog and effects', () => {
       expect(payload.settings.interactionMode).toBe('add');
       expect(payload.settings.addingMode).toBe('drag');
       expect(payload.settings.classAssignmentMode).toBe('deferred');
+      expect(payload.settings.fastClassSwapMode).toBe(true);
       expect(payload.settings.showLabels).toBe(false);
       expect(payload.settings.bboxOpacity).toBe(0.55);
       expect(payload.settings.lineThickness).toBe(5);

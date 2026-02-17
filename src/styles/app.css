@@ -323,14 +323,19 @@ label.inline-check {
   display: flex;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 4px;
+  padding: 4px 10px;
+  min-height: 43px;
+  align-items: center;
   border-bottom: 1px solid var(--line);
 }
 
 .canvas-toolbar > span {
   min-width: 0;
   flex: 1 1 auto;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -533,12 +538,15 @@ label.inline-check {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
+  min-height: 43px;
+  align-items: stretch;
   border-bottom: 1px solid var(--line);
   min-width: 0;
 }
 
 .tabs button {
   min-width: 0;
+  min-height: 34px;
   font-size: 13px;
   padding: 8px 2px;
 }

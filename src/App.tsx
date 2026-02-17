@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { WorkspaceCanvas } from './components/WorkspaceCanvas';
 import { useAppStore } from './store/appStore';
@@ -10,6 +10,7 @@ import {
   saveWorkspaceRecoverySnapshot,
   WorkspaceRecoverySnapshot,
 } from './utils/workspaceRecovery';
+import { validateInferenceModelUrl } from './utils/inference';
 
 export default function App(): JSX.Element {
   const initializeDefaults = useAppStore((s) => s.initializeDefaults);
@@ -24,6 +25,8 @@ export default function App(): JSX.Element {
   const nudgeSelectedAnnotations = useAppStore((s) => s.nudgeSelectedAnnotations);
   const interactionMode = useAppStore((s) => s.interactionMode);
   const setInteractionMode = useAppStore((s) => s.setInteractionMode);
+  const setStatusText = useAppStore((s) => s.setStatusText);
+  const inferenceModelUrl = useAppStore((s) => s.inferenceModelUrl);
   const createRecoverySnapshot = useAppStore((s) => s.createRecoverySnapshot);
   const restoreRecoverySnapshot = useAppStore((s) => s.restoreRecoverySnapshot);
   const images = useAppStore((s) => s.images);
@@ -32,6 +35,7 @@ export default function App(): JSX.Element {
   const [sidebarTab, setSidebarTab] = useState<'general' | 'images' | 'annotations' | 'classes' | 'settings'>('general');
   const [pendingRecovery, setPendingRecovery] = useState<WorkspaceRecoverySnapshot | null>(null);
   const [recoveryReady, setRecoveryReady] = useState(false);
+  const startupModelValidatedRef = useRef(false);
   const hasWorkspaceStateToLose = useMemo(
     () => images.length > 0 || classes.some((c) => !c.isDefault),
     [classes, images]
@@ -45,6 +49,31 @@ export default function App(): JSX.Element {
   useEffect(() => {
     initializeDefaults();
   }, [initializeDefaults]);
+
+  useEffect(() => {
+    // Startup check to catch missing local model files early.
+    if (startupModelValidatedRef.current) return;
+    startupModelValidatedRef.current = true;
+    let cancelled = false;
+    const modelUrl = inferenceModelUrl.trim();
+    if (!modelUrl) return;
+
+    const validate = async (): Promise<void> => {
+      const result = await validateInferenceModelUrl(modelUrl);
+      if (cancelled || result.ok) return;
+      if (useAppStore.getState().statusText) return;
+      if (modelUrl.startsWith('blob:')) {
+        setStatusText(`Uploaded inference model is not available anymore (${result.reason}). Upload it again in Settings.`);
+        return;
+      }
+      setStatusText(`Inference model not reachable at "${modelUrl}" (${result.reason}). Place model under /public/models.`);
+    };
+
+    void validate();
+    return () => {
+      cancelled = true;
+    };
+  }, [inferenceModelUrl, setStatusText]);
 
   // Global undo/redo shortcuts mirror desktop editors on both macOS and non-macOS.
   useEffect(() => {

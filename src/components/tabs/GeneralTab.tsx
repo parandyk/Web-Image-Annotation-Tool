@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ClassesTab } from './ClassesTab';
 import { CoordinatesPanel } from './CoordinatesPanel';
+import { InferencePanel } from './InferencePanel';
 import { ImagesTab } from './ImagesTab';
 import { SettingsTab } from './SettingsTab';
 import { useAppStore } from '../../store/appStore';
@@ -10,6 +11,7 @@ export function GeneralTab(): JSX.Element {
   const [openAnnotations, setOpenAnnotations] = useState(true);
   const [openClasses, setOpenClasses] = useState(true);
   const [openCoordinates, setOpenCoordinates] = useState(true);
+  const [openInference, setOpenInference] = useState(true);
   const [openMinimap, setOpenMinimap] = useState(true);
   const [openSettings, setOpenSettings] = useState(true);
   const showMinimap = useAppStore((s) => s.showMinimap);
@@ -25,6 +27,13 @@ export function GeneralTab(): JSX.Element {
           <button className="collapse-toggle" onClick={() => setOpenCoordinates((v) => !v)}>{openCoordinates ? '▼' : '▶'}</button>
         </div>
         {openCoordinates && <div className="segment-scroll"><CoordinatesPanel /></div>}
+      </section>
+      <section className="general-inference-segment">
+        <div className="row between">
+          <h4>Inference</h4>
+          <button className="collapse-toggle" onClick={() => setOpenInference((v) => !v)}>{openInference ? '▼' : '▶'}</button>
+        </div>
+        {openInference && <div className="segment-scroll"><InferencePanel /></div>}
       </section>
       {showMinimap && minimapLocation === 'sidebar' && (
         <section className="general-minimap-segment">

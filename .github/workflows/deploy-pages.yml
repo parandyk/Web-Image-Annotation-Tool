@@ -1,6 +1,7 @@
 on:
   push:
-      branches: ["decoupling_refactor"]
+    branches: ["main", "decoupling_refactor", "neural"]
+    # branches: ["decoupling_refactor"]
     # branches: ["main"]
   workflow_dispatch:
 
@@ -23,11 +24,32 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: package-lock.json
+
       - run: npm ci
       - run: npm run build
+        env:
+          VITE_BASE_PATH: /Web-Image-Annotation-Tool/
+      - run: mkdir -p combined
+      - run: cp -r dist/* combined/
+
+      - uses: actions/checkout@v4
+        with:
+          ref: neural
+          clean: false 
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_BASE_PATH: /Web-Image-Annotation-Tool/neural/
+      - run: mkdir -p combined/neural
+      - run: cp -r dist/* combined/neural/
+
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: combined
+      # - run: npm run build
+      # - uses: actions/upload-pages-artifact@v3
+      #   with:
+      #     path: dist
 
   deploy:
     environment:

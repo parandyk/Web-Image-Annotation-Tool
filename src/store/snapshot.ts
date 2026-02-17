@@ -1,4 +1,4 @@
-import { ClassData, ImageItem } from '../domain/types';
+import { ClassData, ImageItem, InferenceDetection } from '../domain/types';
 
 export type Snapshot = {
   classes: ClassData[];
@@ -8,6 +8,7 @@ export type Snapshot = {
   selectedAnnotationId: string | null;
   selectedAnnotationIds?: string[];
   nextDisplayIdByClass: Record<string, number>;
+  pendingDetectionsByImageId: Record<string, InferenceDetection[]>;
 };
 
 type HistoryState = {
@@ -23,6 +24,7 @@ type SnapshotSource = {
   selectedAnnotationId: string | null;
   selectedAnnotationIds?: string[];
   nextDisplayIdByClass: Record<string, number>;
+  pendingDetectionsByImageId: Record<string, InferenceDetection[]>;
 };
 
 export function createSnapshotFromState(source: SnapshotSource): Snapshot {
@@ -36,6 +38,7 @@ export function createSnapshotFromState(source: SnapshotSource): Snapshot {
       ...(source.selectedAnnotationIds ?? (source.selectedAnnotationId ? [source.selectedAnnotationId] : [])),
     ],
     nextDisplayIdByClass: source.nextDisplayIdByClass,
+    pendingDetectionsByImageId: source.pendingDetectionsByImageId,
   };
 }
 
@@ -58,6 +61,15 @@ export function cloneSnapshot(s: Snapshot): Snapshot {
     selectedAnnotationId: s.selectedAnnotationId,
     selectedAnnotationIds: [...(s.selectedAnnotationIds ?? (s.selectedAnnotationId ? [s.selectedAnnotationId] : []))],
     nextDisplayIdByClass: { ...s.nextDisplayIdByClass },
+    pendingDetectionsByImageId: Object.fromEntries(
+      Object.entries(s.pendingDetectionsByImageId ?? {}).map(([imageId, detections]) => [
+        imageId,
+        detections.map((det) => ({
+          ...det,
+          bbox: { ...det.bbox },
+        })),
+      ])
+    ),
   };
 }
 

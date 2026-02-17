@@ -21,6 +21,7 @@ import { createHistoryRecoveryActions } from './historyRecoveryActions';
 import { createExportActions } from './exportActions';
 import { createImportOpenActions } from './importOpenActions';
 import { createSelectionActions } from './selectionActions';
+import { createInferenceActions } from './inferenceActions';
 
 const FALLBACK_CLASS_NAME = 'Unassigned';
 
@@ -41,6 +42,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   nextDisplayIdByClass: {},
   undoStack: [],
   redoStack: [],
+  pendingDetectionsByImageId: {},
+  selectedPendingDetectionIds: [],
+  inferenceBusy: false,
 
   // --- Initialization ---
   initializeDefaults: () => {
@@ -89,6 +93,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         selectedClassId: defaultClassId,
       };
     }),
+  setFastClassSwapMode: (v) => set({ fastClassSwapMode: v }),
   setImageSort: (mode) => set({ imageSort: mode }),
   setImageFilter: (mode) => set({ imageFilter: mode }),
   setImageClassFilterMode: (mode) => set({ imageClassFilterMode: mode }),
@@ -110,6 +115,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setShowMinimap: (v) => set({ showMinimap: v }),
   setMinimapLocation: (v) => set({ minimapLocation: v }),
   setDragDeadzonePx: (v) => set({ dragDeadzonePx: Math.max(0, Math.floor(v)) }),
+  setInferenceEnabled: (v) => set({ inferenceEnabled: v }),
+  setInferenceConfidenceThreshold: (v) => set({ inferenceConfidenceThreshold: Math.max(0, Math.min(1, v)) }),
+  setInferenceModelUrl: (v) => set({ inferenceModelUrl: v }),
   setSuppressUnassignedExportWarningDialog: (v) => set({ suppressUnassignedExportWarningDialog: v }),
   setSuppressDeleteAnnotationWarningDialog: (v) => set({ suppressDeleteAnnotationWarningDialog: v }),
   setSuppressDeleteImageWarningDialog: (v) => set({ suppressDeleteImageWarningDialog: v }),
@@ -118,10 +126,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   setStatusText: (v) => set({ statusText: v }),
   setLiveDraftBBox: (bbox) => set({ liveDraftBBox: bbox }),
   setLiveDraftClassId: (classId) => set({ liveDraftClassId: classId }),
+  setSelectedPendingDetectionIds: (detectionIds) =>
+    set({
+      selectedPendingDetectionIds: [...new Set(detectionIds.filter((id): id is string => typeof id === 'string' && id.length > 0))],
+    }),
 
   // --- Import/open actions ---
   ...createImportOpenActions(set, get, FALLBACK_CLASS_NAME),
   ...createSelectionActions(set, get),
+  ...createInferenceActions(set, get),
 
   // --- Class management ---
   ...createClassManagementActions(set, get),

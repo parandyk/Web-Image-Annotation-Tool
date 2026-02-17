@@ -24,6 +24,14 @@ export type Annotation = {
   displayId: number;
 };
 
+export type InferenceDetection = {
+  id: string;
+  classId: string;
+  classIndex: number;
+  score: number;
+  bbox: BBox;
+};
+
 export type ImageSourceKind = 'image' | 'videoFrame';
 
 export type VideoFrameMeta = {

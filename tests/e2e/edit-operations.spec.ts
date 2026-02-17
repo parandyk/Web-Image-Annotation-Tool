@@ -1,4 +1,4 @@
-import { expect, test, type FilePayload } from '@playwright/test';
+import { expect, test, type FilePayload, type Page } from '@playwright/test';
 import {
   annotationItems,
   bmpFile,
@@ -11,6 +11,30 @@ import {
   setAddingMode,
   drawByDragOnCanvas,
 } from './helpers/app';
+
+async function selectImageByName(page: Page, imageName: string): Promise<void> {
+  await openSidebarTab(page, 'Images');
+  const row = page
+    .locator('.image-list-row')
+    .filter({ has: page.locator('.image-name-btn', { hasText: imageName }) })
+    .first();
+  await expect(row).toBeVisible();
+  await row.locator('.image-name-btn').click();
+}
+
+async function bookmarkImageByName(page: Page, imageName: string): Promise<void> {
+  await openSidebarTab(page, 'Images');
+  const row = page
+    .locator('.image-list-row')
+    .filter({ has: page.locator('.image-name-btn', { hasText: imageName }) })
+    .first();
+  await expect(row).toBeVisible();
+  const bookmark = row.locator('button[title="Bookmark image"]');
+  if (await bookmark.isVisible().catch(() => false)) {
+    await bookmark.click();
+  }
+  await expect(row.locator('button[title="Remove bookmark"]')).toBeVisible();
+}
 
 test.describe('Edit operations (combined smoke+regression)', () => {
   test.beforeEach(async ({ page }) => {
@@ -81,6 +105,54 @@ test.describe('Edit operations (combined smoke+regression)', () => {
 
     await runEditAnnotationScopeOperation(page, 'Toggle anchoring', 'Current image', 'Unanchor');
     await expect(annotationItems(page).first().locator('button[title="Anchor annotation"]')).toBeVisible();
+  });
+
+  test('set visibility dialog applies hide only to bookmarked images scope', async ({ page }) => {
+    await openImagesViaTopbar(page, [
+      bmpFile('scope-bookmark-a.bmp', 280, 180, { r: 90, g: 120, b: 170 }),
+      bmpFile('scope-bookmark-b.bmp', 280, 180, { r: 130, g: 105, b: 160 }),
+    ]);
+    await setAddingMode(page, 'Drag');
+
+    await drawByDragOnCanvas(page, { xFrac: 0.34, yFrac: 0.30 }, { xFrac: 0.62, yFrac: 0.66 });
+    await bookmarkImageByName(page, 'scope-bookmark-a.bmp');
+
+    await selectImageByName(page, 'scope-bookmark-b.bmp');
+    await drawByDragOnCanvas(page, { xFrac: 0.28, yFrac: 0.26 }, { xFrac: 0.52, yFrac: 0.58 });
+
+    await runEditAnnotationScopeOperation(page, 'Toggle visibility', 'Bookmarked images', 'Hide');
+
+    await selectImageByName(page, 'scope-bookmark-a.bmp');
+    await openSidebarTab(page, 'Annotations');
+    await expect(annotationItems(page)).toHaveCount(1);
+    await expect(annotationItems(page).first().locator('button[title="Show annotation"]')).toBeVisible();
+
+    await selectImageByName(page, 'scope-bookmark-b.bmp');
+    await openSidebarTab(page, 'Annotations');
+    await expect(annotationItems(page)).toHaveCount(1);
+    await expect(annotationItems(page).first().locator('button[title="Hide annotation"]')).toBeVisible();
+  });
+
+  test('set anchoring dialog applies anchor across all images scope', async ({ page }) => {
+    await openImagesViaTopbar(page, [
+      bmpFile('scope-all-a.bmp', 280, 180, { r: 95, g: 120, b: 170 }),
+      bmpFile('scope-all-b.bmp', 280, 180, { r: 135, g: 105, b: 150 }),
+    ]);
+    await setAddingMode(page, 'Drag');
+
+    await drawByDragOnCanvas(page, { xFrac: 0.32, yFrac: 0.30 }, { xFrac: 0.58, yFrac: 0.62 });
+    await selectImageByName(page, 'scope-all-b.bmp');
+    await drawByDragOnCanvas(page, { xFrac: 0.28, yFrac: 0.32 }, { xFrac: 0.56, yFrac: 0.64 });
+
+    await runEditAnnotationScopeOperation(page, 'Toggle anchoring', 'All images', 'Anchor');
+
+    await selectImageByName(page, 'scope-all-a.bmp');
+    await openSidebarTab(page, 'Annotations');
+    await expect(annotationItems(page).first().locator('button[title="Unanchor annotation"]')).toBeVisible();
+
+    await selectImageByName(page, 'scope-all-b.bmp');
+    await openSidebarTab(page, 'Annotations');
+    await expect(annotationItems(page).first().locator('button[title="Unanchor annotation"]')).toBeVisible();
   });
 
   test('class default anchoring applies to newly drawn annotation', async ({ page }) => {

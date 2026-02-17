@@ -9,6 +9,7 @@ type SelectImagePatch = Pick<
   | 'selectedImageId'
   | 'selectedAnnotationId'
   | 'selectedAnnotationIds'
+  | 'selectedPendingDetectionIds'
   | 'liveDraftBBox'
   | 'liveDraftClassId'
   | 'deferredLastAnnotationId'
@@ -27,10 +28,10 @@ export function buildSelectImagePatch(
     images: reconcileImageSourcesForSelection(images, selectedImageId),
     selectedImageId,
     ...buildSingleAnnotationSelection(null),
+    selectedPendingDetectionIds: [],
     liveDraftBBox: null,
     liveDraftClassId: null,
     deferredLastAnnotationId: null,
     deferredLastImageId: null,
   };
 }
-

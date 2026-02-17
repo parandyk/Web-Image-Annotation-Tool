@@ -17,6 +17,7 @@ export type ViewState = {
   interactionMode: InteractionMode;
   addingMode: AnnotationAddingMode;
   classAssignmentMode: AnnotationClassAssignmentMode;
+  fastClassSwapMode: boolean;
   imageSort: ImageSortMode;
   imageFilter: ImageFilterMode;
   imageClassFilterMode: ImageClassFilterMode;
@@ -40,6 +41,9 @@ export type ViewState = {
   showMinimap: boolean;
   minimapLocation: MinimapLocation;
   dragDeadzonePx: number;
+  inferenceEnabled: boolean;
+  inferenceConfidenceThreshold: number;
+  inferenceModelUrl: string;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -51,6 +55,7 @@ export function getDefaultViewState(): ViewState {
     interactionMode: 'edit',
     addingMode: 'click',
     classAssignmentMode: 'activeClass',
+    fastClassSwapMode: false,
     imageSort: 'none',
     imageFilter: 'none',
     imageClassFilterMode: 'none',
@@ -74,6 +79,9 @@ export function getDefaultViewState(): ViewState {
     showMinimap: true,
     minimapLocation: 'bottomRight',
     dragDeadzonePx: 4,
+    inferenceEnabled: false,
+    inferenceConfidenceThreshold: 0.5,
+    inferenceModelUrl: '/models/yolo26n.onnx',
   };
 }
 
@@ -82,6 +90,7 @@ export function toViewStateSnapshot(state: ViewState): ViewState {
     interactionMode: state.interactionMode,
     addingMode: state.addingMode,
     classAssignmentMode: state.classAssignmentMode,
+    fastClassSwapMode: state.fastClassSwapMode,
     imageSort: state.imageSort,
     imageFilter: state.imageFilter,
     imageClassFilterMode: state.imageClassFilterMode,
@@ -105,6 +114,9 @@ export function toViewStateSnapshot(state: ViewState): ViewState {
     showMinimap: state.showMinimap,
     minimapLocation: state.minimapLocation,
     dragDeadzonePx: state.dragDeadzonePx,
+    inferenceEnabled: state.inferenceEnabled,
+    inferenceConfidenceThreshold: state.inferenceConfidenceThreshold,
+    inferenceModelUrl: state.inferenceModelUrl,
   };
 }
 
@@ -115,6 +127,7 @@ export function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewStat
   const pickBool = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback);
   const pickNum = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  const pickString = (value: unknown, fallback: string): string => (typeof value === 'string' ? value : fallback);
   const pickStringArray = (value: unknown, fallback: string[]): string[] =>
     Array.isArray(value)
       ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string'))]
@@ -124,6 +137,7 @@ export function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewStat
     interactionMode: pickEnum(source.interactionMode, ['add', 'edit'] as const, defaults.interactionMode),
     addingMode: pickEnum(source.addingMode, ['click', 'drag'] as const, defaults.addingMode),
     classAssignmentMode: pickEnum(source.classAssignmentMode, ['activeClass', 'deferred'] as const, defaults.classAssignmentMode),
+    fastClassSwapMode: pickBool(source.fastClassSwapMode, defaults.fastClassSwapMode),
     imageSort: pickEnum(
       source.imageSort,
       ['none', 'alphabetical', 'reversedAlphabetical', 'largestFirst', 'smallestFirst', 'mostAnnotations', 'fewestAnnotations'] as const,
@@ -180,5 +194,12 @@ export function sanitizeViewStateSnapshot(raw: Partial<WorkspaceRecoveryViewStat
       defaults.minimapLocation
     ),
     dragDeadzonePx: Math.max(0, Math.floor(pickNum(source.dragDeadzonePx, defaults.dragDeadzonePx))),
+    inferenceEnabled: pickBool(source.inferenceEnabled, defaults.inferenceEnabled),
+    inferenceConfidenceThreshold: clamp(
+      pickNum(source.inferenceConfidenceThreshold, defaults.inferenceConfidenceThreshold),
+      0,
+      1
+    ),
+    inferenceModelUrl: pickString(source.inferenceModelUrl, defaults.inferenceModelUrl),
   };
 }

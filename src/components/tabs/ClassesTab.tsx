@@ -87,9 +87,15 @@ export function ClassesTab(): JSX.Element {
   const suppressRemoveClassInstancesWarning = useAppStore((s) => s.suppressRemoveClassInstancesWarningDialog);
   const setSuppressRemoveClassInstancesWarning = useAppStore((s) => s.setSuppressRemoveClassInstancesWarningDialog);
   const setStatusText = useAppStore((s) => s.setStatusText);
+  const setAnnotationsClass = useAppStore((s) => s.setAnnotationsClass);
 
   const selectClass = useAppStore((s) => s.selectClass);
   const selectedClassId = useAppStore((s) => s.selectedClassId);
+  const selectedImageId = useAppStore((s) => s.selectedImageId);
+  const selectedAnnotationIds = useAppStore((s) => s.selectedAnnotationIds);
+  const interactionMode = useAppStore((s) => s.interactionMode);
+  const fastClassSwapMode = useAppStore((s) => s.fastClassSwapMode);
+  const setFastClassSwapMode = useAppStore((s) => s.setFastClassSwapMode);
   const classSort = useAppStore((s) => s.classSort);
   const classFilter = useAppStore((s) => s.classFilter);
   const setClassSort = useAppStore((s) => s.setClassSort);
@@ -108,6 +114,13 @@ export function ClassesTab(): JSX.Element {
     [classSearch, classes]
   );
   const classById = useMemo(() => new Map(allClasses.map((c) => [c.id, c])), [allClasses]);
+  const selectedAnnotationIdsForCurrentImage = useMemo(() => {
+    if (!selectedImageId) return [] as string[];
+    const selectedImage = images.find((img) => img.id === selectedImageId);
+    if (!selectedImage) return [] as string[];
+    const available = new Set(selectedImage.annotations.map((ann) => ann.id));
+    return selectedAnnotationIds.filter((id) => available.has(id));
+  }, [images, selectedAnnotationIds, selectedImageId]);
   const classUsageById = useMemo(() => {
     // Global per-class usage is reused by sort/filter and bulk safety checks.
     const m = new Map<string, number>();
@@ -240,6 +253,14 @@ export function ClassesTab(): JSX.Element {
     }
     setSelectedClassIds([classId]);
     selectClass(classId);
+  };
+
+  const tryApplyFastClassSwap = (classId: string, additive: boolean): boolean => {
+    if (additive) return false;
+    if (!fastClassSwapMode || interactionMode !== 'edit') return false;
+    if (selectedAnnotationIdsForCurrentImage.length === 0) return false;
+    setAnnotationsClass(selectedAnnotationIdsForCurrentImage, classId);
+    return true;
   };
 
   const classIdsForMenu = (classId: string): string[] =>
@@ -381,6 +402,14 @@ export function ClassesTab(): JSX.Element {
               placeholder="Filter by class name"
             />
           </label>
+          <button
+            className={fastClassSwapMode ? 'active' : ''}
+            onClick={() => setFastClassSwapMode(!fastClassSwapMode)}
+            aria-pressed={fastClassSwapMode}
+            title="Edit mode: click class names or use class hotkeys to reassign selected annotations."
+          >
+            Fast class swap: {fastClassSwapMode ? 'On' : 'Off'}
+          </button>
         </section>
 
         <section>
@@ -406,6 +435,7 @@ export function ClassesTab(): JSX.Element {
                   onClick={(e) => {
                     const target = e.target as HTMLElement;
                     if (target.closest('button,input,select,textarea,label,a,[role="button"]')) return;
+                    if (tryApplyFastClassSwap(cls.id, isSelectionModifier(e))) return;
                     selectClassRow(cls.id, isSelectionModifier(e));
                   }}
                   onContextMenu={(e) => {
@@ -423,7 +453,10 @@ export function ClassesTab(): JSX.Element {
                   <div className="row between">
                     <button
                       className="grow class-name-btn"
-                      onClick={(e) => selectClassRow(cls.id, isSelectionModifier(e))}
+                      onClick={(e) => {
+                        if (tryApplyFastClassSwap(cls.id, isSelectionModifier(e))) return;
+                        selectClassRow(cls.id, isSelectionModifier(e));
+                      }}
                     >
                       <span className="color-dot" style={{ background: cls.color }} />
                       <MiddleTruncate text={cls.name} className="class-name-mid" />

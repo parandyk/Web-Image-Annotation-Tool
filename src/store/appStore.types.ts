@@ -8,6 +8,7 @@ import {
   ClassFilterMode,
   ClassSortMode,
   ExportAnnotationFormat,
+  InferenceDetection,
   ImageClassFilterMode,
   ImageFilterMode,
   ImageItem,
@@ -39,11 +40,15 @@ export type AppState = ViewState & {
   nextDisplayIdByClass: Record<string, number>;
   undoStack: Snapshot[];
   redoStack: Snapshot[];
+  pendingDetectionsByImageId: Record<string, InferenceDetection[]>;
+  selectedPendingDetectionIds: string[];
+  inferenceBusy: boolean;
 
   initializeDefaults: () => void;
   setInteractionMode: (mode: InteractionMode) => void;
   setAddingMode: (mode: AnnotationAddingMode) => void;
   setClassAssignmentMode: (mode: AnnotationClassAssignmentMode) => void;
+  setFastClassSwapMode: (v: boolean) => void;
   setImageSort: (mode: ImageSortMode) => void;
   setImageFilter: (mode: ImageFilterMode) => void;
   setImageClassFilterMode: (mode: ImageClassFilterMode) => void;
@@ -62,6 +67,9 @@ export type AppState = ViewState & {
   setShowMinimap: (v: boolean) => void;
   setMinimapLocation: (v: MinimapLocation) => void;
   setDragDeadzonePx: (v: number) => void;
+  setInferenceEnabled: (v: boolean) => void;
+  setInferenceConfidenceThreshold: (v: number) => void;
+  setInferenceModelUrl: (v: string) => void;
   setSuppressUnassignedExportWarningDialog: (v: boolean) => void;
   setSuppressDeleteAnnotationWarningDialog: (v: boolean) => void;
   setSuppressDeleteImageWarningDialog: (v: boolean) => void;
@@ -70,6 +78,7 @@ export type AppState = ViewState & {
   setStatusText: (v: string | null) => void;
   setLiveDraftBBox: (bbox: BBox | null) => void;
   setLiveDraftClassId: (classId: string | null) => void;
+  setSelectedPendingDetectionIds: (detectionIds: string[]) => void;
 
   openImages: (files: File[]) => Promise<void>;
   openVideoFrames: (file: File, options: VideoParseOptions) => Promise<void>;
@@ -85,6 +94,12 @@ export type AppState = ViewState & {
   toggleAnnotationSelection: (annotationId: string) => void;
   clearAnnotationSelection: () => void;
   selectAllAnnotationsCurrentImage: () => void;
+  runInferenceCurrentImage: () => Promise<void>;
+  acceptDetection: (detectionId: string) => void;
+  rejectDetection: (detectionId: string) => void;
+  rejectDetections: (detectionIds: string[]) => void;
+  acceptAllDetectionsCurrentImage: () => void;
+  clearDetectionsCurrentImage: () => void;
 
   addClass: (name: string) => void;
   renameClass: (classId: string, newName: string) => void;

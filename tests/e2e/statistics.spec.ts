@@ -1,4 +1,4 @@
-import { expect, test, type FilePayload, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   annotationItems,
   bmpFile,
@@ -8,39 +8,10 @@ import {
   openSidebarTab,
   setAddingMode,
 } from './helpers/app';
-
-function topbar(page: Page): Locator {
-  return page.locator('header.topbar');
-}
-
-function modalByHeading(page: Page, heading: string): Locator {
-  return page
-    .locator('.modal-card')
-    .filter({ has: page.getByRole('heading', { name: heading }) })
-    .first();
-}
-
-function textFile(name: string, content: string, mimeType = 'text/plain'): FilePayload {
-  return {
-    name,
-    mimeType,
-    buffer: Buffer.from(content, 'utf8'),
-  };
-}
-
-async function openTopbarMenu(page: Page, menuName: 'Import'): Promise<Locator> {
-  await topbar(page).getByRole('button', { name: menuName, exact: true }).click();
-  const menu = page.locator('.menu.open .menu-popover').first();
-  await expect(menu).toBeVisible();
-  return menu;
-}
+import { importClassesViaTopbar, modalByHeading, topbar } from './helpers/topbar';
 
 async function importClasses(page: Page, classes: string[]): Promise<void> {
-  const menu = await openTopbarMenu(page, 'Import');
-  const chooserPromise = page.waitForEvent('filechooser');
-  await menu.getByRole('button', { name: 'Import classes', exact: true }).click();
-  const chooser = await chooserPromise;
-  await chooser.setFiles([textFile('classes.txt', `${classes.join('\n')}\n`)]);
+  await importClassesViaTopbar(page, classes);
 }
 
 async function selectImageByName(page: Page, imageName: string): Promise<void> {
