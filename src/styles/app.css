@@ -539,8 +539,8 @@ label.inline-check {
 
 .tabs button {
   min-width: 0;
-  font-size: 13px;
-  padding: 8px 2px;
+  font-size: 12px;
+  padding: 8px 1px;
 }
 
 .tab-body {
