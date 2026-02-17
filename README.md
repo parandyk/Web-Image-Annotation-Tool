@@ -36,12 +36,16 @@ Ctrl + Z for undo, Ctrl + Shift + Z for redo. Delete works where applicable, e.g
 
 ## Showcase
 
-The tool demo is available at:
-https://parandyk.github.io/Web-Image-Annotation-Tool/
+[Tool stable demo](https://parandyk.github.io/Web-Image-Annotation-Tool/).
+
+[Inference beta demo](https://parandyk.github.io/Web-Image-Annotation-Tool/neural)
+
 
 ## Upcoming features
 
-Automatic annotation using neural network inference - coming soon!
+Automatic annotation using neural network inference - [now available in neural branch](https://github.com/parandyk/Web-Image-Annotation-Tool/tree/neural)!
+
+YOLO26n by [Ultralytics](https://github.com/ultralytics/ultralytics) was utilized for demonstration purposes.
 
 ## Disclaimer
 
