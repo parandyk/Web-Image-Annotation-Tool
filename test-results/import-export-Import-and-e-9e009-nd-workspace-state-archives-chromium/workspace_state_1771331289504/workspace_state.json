@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "exportedAt": "2026-02-17T12:28:09.496Z",
+  "settings": {
+    "interactionMode": "edit",
+    "addingMode": "click",
+    "classAssignmentMode": "activeClass",
+    "imageSort": "none",
+    "imageFilter": "none",
+    "imageClassFilterMode": "none",
+    "imageClassFilterClassIds": [],
+    "annotationSort": "none",
+    "annotationFilter": "none",
+    "classSort": "none",
+    "classFilter": "none",
+    "suppressUnassignedExportWarningDialog": false,
+    "suppressDeleteAnnotationWarningDialog": false,
+    "suppressDeleteImageWarningDialog": false,
+    "suppressRemoveClassInstancesWarningDialog": false,
+    "exportIncludeUnassigned": false,
+    "showLabels": true,
+    "showOnlySelectedThumbs": true,
+    "bboxOpacity": 0.2,
+    "lineThickness": 2,
+    "drawBoxFill": true,
+    "drawBoxBorder": true,
+    "showCrosshair": true,
+    "showMinimap": true,
+    "minimapLocation": "bottomRight",
+    "dragDeadzonePx": 4
+  },
+  "selection": {
+    "selectedClassId": "class_2dd2b2c7-2275-420d-abc8-bd9399fe1c7d",
+    "selectedImageId": "img_9e10c242-d696-43e2-88bf-2c8bee11dfa0",
+    "selectedAnnotationId": null,
+    "selectedAnnotationIds": []
+  },
+  "classes": [
+    {
+      "id": "class_2dd2b2c7-2275-420d-abc8-bd9399fe1c7d",
+      "name": "Unassigned",
+      "color": "#27272A",
+      "isVisible": true,
+      "defaultAnchored": false,
+      "isDefault": true,
+      "hotkey": null
+    },
+    {
+      "id": "class_1abd0e29-76f5-4c2c-8f96-d4536f5552ee",
+      "name": "Vehicle",
+      "color": "#10B981",
+      "isVisible": true,
+      "defaultAnchored": false,
+      "isDefault": false,
+      "hotkey": null
+    },
+    {
+      "id": "class_ef90e032-9dac-4e2e-8c80-09433bc662db",
+      "name": "Person",
+      "color": "#F59E0B",
+      "isVisible": true,
+      "defaultAnchored": false,
+      "isDefault": false,
+      "hotkey": null
+    }
+  ],
+  "images": [
+    {
+      "id": "img_9e10c242-d696-43e2-88bf-2c8bee11dfa0",
+      "name": "workspace-export.bmp",
+      "fileName": "workspace-export.bmp",
+      "isBookmarked": false,
+      "sourceKind": "image",
+      "videoMeta": null,
+      "width": 280,
+      "height": 180,
+      "annotations": []
+    }
+  ],
+  "nextDisplayIdByClass": {
+    "img_9e10c242-d696-43e2-88bf-2c8bee11dfa0": 1
+  }
+}
